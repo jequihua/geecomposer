@@ -66,7 +66,7 @@ Top-level functions:
 From the package workspace:
 
 ```powershell
-cd 08_pkg
+cd geecomposer
 python -m pip install -e .[dev]
 ```
 
