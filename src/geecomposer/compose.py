@@ -23,7 +23,7 @@ from typing import Any, Callable
 import ee
 
 from .aoi import to_ee_geometry
-from .datasets import sentinel1, sentinel2
+from .datasets import sentinel1, sentinel1_float, sentinel2
 from .exceptions import DatasetNotSupportedError, GeeComposerError
 from .reducers.temporal import apply_reducer
 from .utils.metadata import build_metadata_payload
@@ -32,6 +32,7 @@ from .validation import validate_dataset
 # Maps validated dataset names to their loader modules.
 _DATASET_MODULES: dict[str, Any] = {
     "sentinel1": sentinel1,
+    "sentinel1_float": sentinel1_float,
     "sentinel2": sentinel2,
 }
 
@@ -59,8 +60,9 @@ def compose(
         in v0.1 — when *dataset* is provided, the collection is resolved
         automatically.
     dataset:
-        Friendly preset name (``"sentinel2"`` or ``"sentinel1"``). Resolves
-        the collection ID and enables dataset-specific loading and masking.
+        Friendly preset name: ``"sentinel2"``, ``"sentinel1"`` (dB), or
+        ``"sentinel1_float"`` (linear units). Resolves the collection ID
+        and enables dataset-specific loading and masking.
     aoi:
         Area of interest. Accepts ``ee.Geometry``, ``ee.Feature``,
         ``ee.FeatureCollection``, a GeoJSON dict, or a path to a local
@@ -69,7 +71,7 @@ def compose(
         ISO date strings for temporal filtering.
     reducer:
         Temporal reducer name (``"median"``, ``"mean"``, ``"min"``,
-        ``"max"``, ``"mosaic"``).
+        ``"max"``, ``"mosaic"``, ``"count"``).
     transform:
         Optional per-image transform callable ``ee.Image -> ee.Image``.
     select:

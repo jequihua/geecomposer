@@ -1,14 +1,16 @@
-"""Sentinel-1 dB-scaled dataset helpers.
+"""Sentinel-1 linear-unit (float) dataset helpers.
 
-Handles collection loading and filtering for Sentinel-1 Ground Range
-Detected imagery in decibel units (``COPERNICUS/S1_GRD``).
+Handles collection loading and filtering for the Sentinel-1 Ground Range
+Detected imagery in linear power units (``COPERNICUS/S1_GRD_FLOAT``).
 
-Band values are in dB scale.  For physically meaningful ratio features
-such as VH/VV or RVI, use the ``sentinel1_float`` preset instead, which
-operates in linear power units.
+This module provides the same filter interface as the dB-scaled
+``sentinel1`` module but uses the float-scaled collection where band values
+represent linear backscatter power.  Linear units are required for
+physically meaningful ratio and algebraic features such as VH/VV, VH-VV,
+and RVI.
 
 No advanced SAR preprocessing (speckle filtering, terrain correction,
-coherence) is included in v0.1.
+coherence) is included.
 """
 
 from __future__ import annotations
@@ -22,11 +24,11 @@ from ._sentinel1_filters import (
     validate_filters,
 )
 
-COLLECTION_ID = "COPERNICUS/S1_GRD"
+COLLECTION_ID = "COPERNICUS/S1_GRD_FLOAT"
 
 
 def get_collection_id() -> str:
-    """Return the default Sentinel-1 collection identifier."""
+    """Return the Sentinel-1 float collection identifier."""
     return COLLECTION_ID
 
 
@@ -36,7 +38,7 @@ def load_collection(
     end: str,
     filters: dict | None = None,
 ) -> ee.ImageCollection:
-    """Load a Sentinel-1 GRD collection filtered by AOI, date, and radar filters.
+    """Load a Sentinel-1 GRD Float collection filtered by AOI, date, and radar filters.
 
     Parameters
     ----------
@@ -45,19 +47,17 @@ def load_collection(
     start, end:
         ISO date strings for temporal filtering.
     filters:
-        Optional dict of Sentinel-1-specific filters.  Supported keys:
+        Optional dict of Sentinel-1-specific filters.  Supported keys are
+        the same as for the dB-scaled ``sentinel1`` module:
 
-        - ``"instrumentMode"`` (str): e.g. ``"IW"``.  Defaults to ``"IW"``
-          if not provided.
+        - ``"instrumentMode"`` (str): e.g. ``"IW"``.  Defaults to ``"IW"``.
         - ``"orbitPass"`` (str): ``"ASCENDING"`` or ``"DESCENDING"``.
-        - ``"polarizations"`` (list[str]): e.g. ``["VV", "VH"]``.  Each
-          entry is applied as a ``listContains`` filter on
-          ``transmitterReceiverPolarisation``.
+        - ``"polarizations"`` (list[str]): e.g. ``["VV", "VH"]``.
 
     Returns
     -------
     ee.ImageCollection
-        The filtered Sentinel-1 collection.
+        The filtered Sentinel-1 float collection.
 
     Raises
     ------
@@ -94,17 +94,16 @@ def apply_mask(
     collection: ee.ImageCollection,
     mask: str,
 ) -> ee.ImageCollection:
-    """Apply a masking preset to a Sentinel-1 collection.
+    """Apply a masking preset to a Sentinel-1 float collection.
 
-    Sentinel-1 GRD imagery does not have a standard cloud masking workflow.
-    No masking presets are supported in v0.1.
+    No masking presets are supported for Sentinel-1 in v0.1.
 
     Raises
     ------
     GeeComposerError
-        Always — no masking presets are available for Sentinel-1 in v0.1.
+        Always.
     """
     raise GeeComposerError(
-        f"No masking presets are supported for Sentinel-1 in v0.1. "
+        f"No masking presets are supported for Sentinel-1 float in v0.1. "
         f"Received mask='{mask}'."
     )

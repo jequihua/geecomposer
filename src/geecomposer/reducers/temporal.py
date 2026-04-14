@@ -18,6 +18,7 @@ _REDUCER_MAP: dict[str, Callable[[ee.ImageCollection], ee.Image]] = {
     "min": lambda col: col.min(),
     "max": lambda col: col.max(),
     "mosaic": lambda col: col.mosaic(),
+    "count": lambda col: col.count(),
 }
 
 
@@ -29,7 +30,8 @@ def apply_reducer(collection: ee.ImageCollection, reducer_name: str) -> ee.Image
     collection:
         The ``ee.ImageCollection`` to reduce.
     reducer_name:
-        One of ``"median"``, ``"mean"``, ``"min"``, ``"max"``, ``"mosaic"``.
+        One of ``"median"``, ``"mean"``, ``"min"``, ``"max"``, ``"mosaic"``,
+        ``"count"``.
 
     Returns
     -------

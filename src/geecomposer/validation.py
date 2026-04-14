@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from .exceptions import DatasetNotSupportedError, InvalidReducerError
 
-SUPPORTED_DATASETS: tuple[str, ...] = ("sentinel1", "sentinel2")
-SUPPORTED_REDUCERS: tuple[str, ...] = ("median", "mean", "min", "max", "mosaic")
+SUPPORTED_DATASETS: tuple[str, ...] = ("sentinel1", "sentinel1_float", "sentinel2")
+SUPPORTED_REDUCERS: tuple[str, ...] = ("median", "mean", "min", "max", "mosaic", "count")
 
 SUPPORTED_AOI_VECTOR_EXTENSIONS: tuple[str, ...] = (".geojson", ".json", ".shp", ".gpkg")
 
