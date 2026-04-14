@@ -5,7 +5,7 @@ composites with a small, explicit API.
 
 It is intentionally narrow. v0.1 focuses on:
 
-- Sentinel-2 and Sentinel-1 image collections
+- Sentinel-2, Sentinel-1 (dB), and Sentinel-1 float (linear units) image collections
 - AOIs from local vector files, GeoJSON-like dicts, and Earth Engine geometry objects
 - per-image transforms plus temporal reducers
 - yearly grouping
@@ -29,7 +29,8 @@ Engine behind a large abstraction layer.
   - GeoJSON-like dicts
   - local vector files such as `.geojson`, `.shp`, and `.gpkg`
 - compose Sentinel-2 collections with Cloud Score+ masking
-- compose Sentinel-1 collections with explicit radar filters
+- compose Sentinel-1 dB collections with explicit radar filters
+- compose Sentinel-1 float (linear-unit) collections for ratio features
 - apply built-in or custom per-image transforms
 - reduce across time with:
   - `median`
@@ -37,6 +38,7 @@ Engine behind a large abstraction layer.
   - `min`
   - `max`
   - `mosaic`
+  - `count`
 - build yearly composites with `compose_yearly()`
 - create Drive export tasks with `export_to_drive()`
 
@@ -121,6 +123,59 @@ img = compose(
 )
 ```
 
+### 3b. Compose A Sentinel-1 Float Image (Linear Units)
+
+Use `sentinel1_float` for physically meaningful ratio features like VH/VV:
+
+```python
+from geecomposer.transforms.expressions import expression_transform
+
+vh_vv = expression_transform(
+    expression="vh / vv",
+    band_map={"vh": "VH", "vv": "VV"},
+    name="vh_vv_ratio",
+)
+
+img = compose(
+    dataset="sentinel1_float",
+    aoi="01_data/case_studies/rbmn.geojson",
+    start="2024-01-01",
+    end="2024-12-31",
+    filters={"polarizations": ["VV", "VH"]},
+    transform=vh_vv,
+    reducer="median",
+)
+```
+
+> **When to use which:** `sentinel1` provides dB-scaled backscatter
+> (suitable for direct band composites). `sentinel1_float` provides
+> linear power values (required for ratio and algebraic SAR features
+> such as VH/VV, VH−VV, and RVI).
+
+### 3c. Count Valid Observations
+
+Use `reducer="count"` when you want a per-pixel count of the observations
+available at the reduction step.
+
+For Sentinel-2 with cloud masking, this gives a clear-observation count:
+
+```python
+from geecomposer.transforms.indices import ndvi
+
+clear_ndvi_count = compose(
+    dataset="sentinel2",
+    aoi="01_data/case_studies/rbmn.geojson",
+    start="2024-01-01",
+    end="2024-12-31",
+    mask="s2_cloud_score_plus",
+    transform=ndvi(),
+    reducer="count",
+)
+```
+
+For `sentinel1` and `sentinel1_float`, the same reducer gives a count of
+contributing acquisitions rather than a cloud-free count.
+
 ### 4. Compose Yearly Images
 
 ```python
@@ -197,6 +252,7 @@ Supported reducer names:
 - `"min"`
 - `"max"`
 - `"mosaic"`
+- `"count"` (per-pixel observation count)
 
 ## Notes And Caveats
 
@@ -294,3 +350,19 @@ If you use `compose_yearly()`, you get:
 
 To export one raster per year, loop over that dictionary and create one task
 per year.
+
+## Current Project Status
+
+The package is now implemented and unit-tested for the intended v0.1 scope:
+
+- all four public API functions exist
+- both required dataset presets exist
+- yearly grouping exists
+- Drive export exists
+- live notebook validation has begun
+
+Still deferred:
+
+- GCS export
+- monthly/seasonal grouping
+- broader release polish
