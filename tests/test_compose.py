@@ -41,6 +41,22 @@ def _make_mock_s1_module() -> MagicMock:
     return mod
 
 
+def _make_mock_s1_float_module() -> MagicMock:
+    """Build a mock that mimics the sentinel1_float dataset module interface."""
+    mod = MagicMock()
+    mod.get_collection_id.return_value = "COPERNICUS/S1_GRD_FLOAT"
+    return mod
+
+
+def _all_mock_modules() -> dict:
+    """Build a dict of all mock dataset modules."""
+    return {
+        "sentinel1": _make_mock_s1_module(),
+        "sentinel1_float": _make_mock_s1_float_module(),
+        "sentinel2": _make_mock_s2_module(),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Input validation through compose()
 # ---------------------------------------------------------------------------
@@ -137,6 +153,15 @@ class TestDatasetResolution:
         assert name == "sentinel1"
         assert col_id == "COPERNICUS/S1_GRD"
         assert mod is sentinel1
+
+    def test_sentinel1_float_resolves(self) -> None:
+        from geecomposer.compose import _resolve_dataset
+        from geecomposer.datasets import sentinel1_float
+
+        name, col_id, mod = _resolve_dataset("sentinel1_float", None)
+        assert name == "sentinel1_float"
+        assert col_id == "COPERNICUS/S1_GRD_FLOAT"
+        assert mod is sentinel1_float
 
     def test_raw_collection_returns_generic_loader(self) -> None:
         from geecomposer.compose import _GenericLoader, _resolve_dataset
@@ -584,6 +609,128 @@ class TestComposeSentinel1Pipeline:
 
 
 # ---------------------------------------------------------------------------
+# Sentinel-1 float compose path
+# ---------------------------------------------------------------------------
+
+
+class TestComposeSentinel1FloatPipeline:
+    @patch("geecomposer.compose.to_ee_geometry")
+    @patch("geecomposer.compose.apply_reducer")
+    def test_sentinel1_float_pipeline(
+        self,
+        mock_apply_reducer: MagicMock,
+        mock_to_ee: MagicMock,
+    ) -> None:
+        """Minimal S1 float compose: dataset + aoi + dates + reducer."""
+        from geecomposer.compose import compose
+
+        mock_to_ee.return_value = MagicMock()
+        mods = _all_mock_modules()
+        mock_s1f = mods["sentinel1_float"]
+        mock_col = MagicMock()
+        mock_s1f.load_collection.return_value = mock_col
+
+        mock_image = MagicMock()
+        mock_apply_reducer.return_value = mock_image
+        mock_image.set.return_value = mock_image
+
+        with patch("geecomposer.compose._DATASET_MODULES", mods):
+            result = compose(
+                dataset="sentinel1_float",
+                aoi=POLYGON_GEOJSON,
+                start="2024-01-01",
+                end="2024-12-31",
+                reducer="median",
+            )
+
+        mock_s1f.load_collection.assert_called_once()
+        mock_apply_reducer.assert_called_once_with(mock_col, "median")
+        props = mock_image.set.call_args[0][0]
+        assert props["geecomposer:dataset"] == "sentinel1_float"
+        assert props["geecomposer:collection"] == "COPERNICUS/S1_GRD_FLOAT"
+        assert result is mock_image
+
+    @patch("geecomposer.compose.to_ee_geometry")
+    @patch("geecomposer.compose.apply_reducer")
+    def test_sentinel1_float_with_expression_transform(
+        self,
+        mock_apply_reducer: MagicMock,
+        mock_to_ee: MagicMock,
+    ) -> None:
+        """Linear-unit VH/VV ratio via expression_transform on float data."""
+        from geecomposer.compose import compose
+        from geecomposer.transforms.expressions import expression_transform
+
+        mock_to_ee.return_value = MagicMock()
+        mods = _all_mock_modules()
+        mock_s1f = mods["sentinel1_float"]
+        mock_col = MagicMock()
+        mock_mapped = MagicMock()
+        mock_s1f.load_collection.return_value = mock_col
+        mock_col.map.return_value = mock_mapped
+
+        mock_image = MagicMock()
+        mock_apply_reducer.return_value = mock_image
+        mock_image.set.return_value = mock_image
+
+        vh_vv_ratio = expression_transform(
+            expression="vh / vv",
+            band_map={"vh": "VH", "vv": "VV"},
+            name="vh_vv_ratio",
+        )
+
+        with patch("geecomposer.compose._DATASET_MODULES", mods):
+            compose(
+                dataset="sentinel1_float",
+                aoi=POLYGON_GEOJSON,
+                start="2024-01-01",
+                end="2024-12-31",
+                filters={"polarizations": ["VV", "VH"]},
+                transform=vh_vv_ratio,
+                reducer="median",
+            )
+
+        mock_col.map.assert_called_once_with(vh_vv_ratio)
+        mock_apply_reducer.assert_called_once_with(mock_mapped, "median")
+        props = mock_image.set.call_args[0][0]
+        assert props["geecomposer:transform"] == "expression_transform('vh_vv_ratio')"
+
+    @patch("geecomposer.compose.to_ee_geometry")
+    @patch("geecomposer.compose.apply_reducer")
+    def test_sentinel1_db_unchanged_after_float_added(
+        self,
+        mock_apply_reducer: MagicMock,
+        mock_to_ee: MagicMock,
+    ) -> None:
+        """Adding float preset does not change dB sentinel1 behavior."""
+        from geecomposer.compose import compose
+
+        mock_to_ee.return_value = MagicMock()
+        mods = _all_mock_modules()
+        mock_s1_db = mods["sentinel1"]
+        mock_col = MagicMock()
+        mock_s1_db.load_collection.return_value = mock_col
+
+        mock_image = MagicMock()
+        mock_apply_reducer.return_value = mock_image
+        mock_image.set.return_value = mock_image
+
+        with patch("geecomposer.compose._DATASET_MODULES", mods):
+            compose(
+                dataset="sentinel1",
+                aoi=POLYGON_GEOJSON,
+                start="2024-01-01",
+                end="2024-12-31",
+                reducer="median",
+            )
+
+        mock_s1_db.load_collection.assert_called_once()
+        props = mock_image.set.call_args[0][0]
+        assert props["geecomposer:dataset"] == "sentinel1"
+        assert props["geecomposer:collection"] == "COPERNICUS/S1_GRD"
+
+
+# ---------------------------------------------------------------------------
 # Raw collection path
 # ---------------------------------------------------------------------------
 
@@ -759,3 +906,121 @@ class TestTransformMetadata:
 
         props = mock_image.set.call_args[0][0]
         assert props["geecomposer:transform"] == "expression_transform('ratio')"
+
+
+# ---------------------------------------------------------------------------
+# Count reducer compose paths
+# ---------------------------------------------------------------------------
+
+
+class TestComposeCountReducer:
+    @patch("geecomposer.compose.to_ee_geometry")
+    @patch("geecomposer.compose.apply_reducer")
+    def test_sentinel2_count_with_mask(
+        self,
+        mock_apply_reducer: MagicMock,
+        mock_to_ee: MagicMock,
+    ) -> None:
+        """S2 count with masking: counts clear observations after mask."""
+        from geecomposer.compose import compose
+
+        mock_to_ee.return_value = MagicMock()
+        mods = _all_mock_modules()
+        mock_s2 = mods["sentinel2"]
+        mock_col = MagicMock()
+        mock_masked = MagicMock()
+        mock_s2.load_collection.return_value = mock_col
+        mock_s2.apply_mask.return_value = mock_masked
+
+        mock_image = MagicMock()
+        mock_apply_reducer.return_value = mock_image
+        mock_image.set.return_value = mock_image
+
+        with patch("geecomposer.compose._DATASET_MODULES", mods):
+            compose(
+                dataset="sentinel2",
+                aoi=POLYGON_GEOJSON,
+                start="2024-01-01",
+                end="2024-12-31",
+                mask="s2_cloud_score_plus",
+                reducer="count",
+            )
+
+        mock_s2.apply_mask.assert_called_once()
+        mock_apply_reducer.assert_called_once_with(mock_masked, "count")
+        props = mock_image.set.call_args[0][0]
+        assert props["geecomposer:reducer"] == "count"
+
+    @patch("geecomposer.compose.to_ee_geometry")
+    @patch("geecomposer.compose.apply_reducer")
+    def test_sentinel1_float_count(
+        self,
+        mock_apply_reducer: MagicMock,
+        mock_to_ee: MagicMock,
+    ) -> None:
+        """S1 float count: counts contributing acquisitions."""
+        from geecomposer.compose import compose
+
+        mock_to_ee.return_value = MagicMock()
+        mods = _all_mock_modules()
+        mock_s1f = mods["sentinel1_float"]
+        mock_col = MagicMock()
+        mock_s1f.load_collection.return_value = mock_col
+
+        mock_image = MagicMock()
+        mock_apply_reducer.return_value = mock_image
+        mock_image.set.return_value = mock_image
+
+        with patch("geecomposer.compose._DATASET_MODULES", mods):
+            compose(
+                dataset="sentinel1_float",
+                aoi=POLYGON_GEOJSON,
+                start="2024-01-01",
+                end="2024-12-31",
+                filters={"polarizations": ["VV", "VH"]},
+                reducer="count",
+            )
+
+        mock_apply_reducer.assert_called_once_with(mock_col, "count")
+
+    @patch("geecomposer.compose.to_ee_geometry")
+    @patch("geecomposer.compose.apply_reducer")
+    def test_sentinel2_ndvi_count_with_mask_and_transform(
+        self,
+        mock_apply_reducer: MagicMock,
+        mock_to_ee: MagicMock,
+    ) -> None:
+        """S2 NDVI count with masking: counts valid NDVI observations."""
+        from geecomposer.compose import compose
+        from geecomposer.transforms.indices import ndvi
+
+        mock_to_ee.return_value = MagicMock()
+        mods = _all_mock_modules()
+        mock_s2 = mods["sentinel2"]
+        mock_col = MagicMock()
+        mock_masked = MagicMock()
+        mock_transformed = MagicMock()
+        mock_s2.load_collection.return_value = mock_col
+        mock_s2.apply_mask.return_value = mock_masked
+        mock_masked.map.return_value = mock_transformed
+
+        mock_image = MagicMock()
+        mock_apply_reducer.return_value = mock_image
+        mock_image.set.return_value = mock_image
+
+        transform = ndvi()
+
+        with patch("geecomposer.compose._DATASET_MODULES", mods):
+            compose(
+                dataset="sentinel2",
+                aoi=POLYGON_GEOJSON,
+                start="2024-01-01",
+                end="2024-12-31",
+                mask="s2_cloud_score_plus",
+                transform=transform,
+                reducer="count",
+            )
+
+        mock_s2.apply_mask.assert_called_once()
+        mock_masked.map.assert_called_once_with(transform)
+        mock_apply_reducer.assert_called_once_with(mock_transformed, "count")

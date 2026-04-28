@@ -76,11 +76,13 @@ class TestValidateDataset:
 class TestConstants:
     def test_supported_reducers_is_tuple(self) -> None:
         assert isinstance(SUPPORTED_REDUCERS, tuple)
-        assert len(SUPPORTED_REDUCERS) == 5
+        assert len(SUPPORTED_REDUCERS) == 6
+        assert "count" in SUPPORTED_REDUCERS
 
     def test_supported_datasets_is_tuple(self) -> None:
         assert isinstance(SUPPORTED_DATASETS, tuple)
-        assert len(SUPPORTED_DATASETS) == 2
+        assert len(SUPPORTED_DATASETS) == 3
+        assert "sentinel1_float" in SUPPORTED_DATASETS
 
     def test_supported_vector_extensions(self) -> None:
         assert ".geojson" in SUPPORTED_AOI_VECTOR_EXTENSIONS

@@ -136,60 +136,60 @@ class TestLoadCollection:
 
 class TestFilterValidation:
     def test_unsupported_filter_key_raises(self) -> None:
-        from geecomposer.datasets.sentinel1 import _validate_filters
+        from geecomposer.datasets._sentinel1_filters import validate_filters as _validate_filters
 
         with pytest.raises(GeeComposerError, match="Unsupported Sentinel-1 filter"):
             _validate_filters({"resolution_meters": 10})
 
     def test_mixed_valid_and_invalid_raises(self) -> None:
-        from geecomposer.datasets.sentinel1 import _validate_filters
+        from geecomposer.datasets._sentinel1_filters import validate_filters as _validate_filters
 
         with pytest.raises(GeeComposerError, match="Unsupported"):
             _validate_filters({"instrumentMode": "IW", "badKey": "value"})
 
     def test_valid_filters_pass(self) -> None:
-        from geecomposer.datasets.sentinel1 import _validate_filters
+        from geecomposer.datasets._sentinel1_filters import validate_filters as _validate_filters
 
         _validate_filters({"instrumentMode": "IW", "orbitPass": "ASCENDING"})
 
     def test_empty_filters_pass(self) -> None:
-        from geecomposer.datasets.sentinel1 import _validate_filters
+        from geecomposer.datasets._sentinel1_filters import validate_filters as _validate_filters
 
         _validate_filters({})
 
     def test_non_string_instrument_mode_raises(self) -> None:
-        from geecomposer.datasets.sentinel1 import _validate_filters
+        from geecomposer.datasets._sentinel1_filters import validate_filters as _validate_filters
 
         with pytest.raises(GeeComposerError, match="instrumentMode must be a non-empty string"):
             _validate_filters({"instrumentMode": 123})
 
     def test_non_string_orbit_pass_raises(self) -> None:
-        from geecomposer.datasets.sentinel1 import _validate_filters
+        from geecomposer.datasets._sentinel1_filters import validate_filters as _validate_filters
 
         with pytest.raises(GeeComposerError, match="orbitPass must be a non-empty string"):
             _validate_filters({"orbitPass": 123})
 
     def test_empty_polarizations_list_raises(self) -> None:
-        from geecomposer.datasets.sentinel1 import _validate_filters
+        from geecomposer.datasets._sentinel1_filters import validate_filters as _validate_filters
 
         with pytest.raises(GeeComposerError, match="polarizations must be a non-empty list"):
             _validate_filters({"polarizations": []})
 
     def test_string_polarizations_raises(self) -> None:
         """A bare string like 'VV' must be rejected — it would iterate as characters."""
-        from geecomposer.datasets.sentinel1 import _validate_filters
+        from geecomposer.datasets._sentinel1_filters import validate_filters as _validate_filters
 
         with pytest.raises(GeeComposerError, match="polarizations must be a non-empty list"):
             _validate_filters({"polarizations": "VV"})
 
     def test_non_string_element_in_polarizations_raises(self) -> None:
-        from geecomposer.datasets.sentinel1 import _validate_filters
+        from geecomposer.datasets._sentinel1_filters import validate_filters as _validate_filters
 
         with pytest.raises(GeeComposerError, match="polarizations\\[1\\] must be a non-empty string"):
             _validate_filters({"polarizations": ["VV", 42]})
 
     def test_empty_string_instrument_mode_raises(self) -> None:
-        from geecomposer.datasets.sentinel1 import _validate_filters
+        from geecomposer.datasets._sentinel1_filters import validate_filters as _validate_filters
 
         with pytest.raises(GeeComposerError, match="instrumentMode must be a non-empty string"):
             _validate_filters({"instrumentMode": ""})

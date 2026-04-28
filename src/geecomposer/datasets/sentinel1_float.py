@@ -9,8 +9,14 @@ represent linear backscatter power.  Linear units are required for
 physically meaningful ratio and algebraic features such as VH/VV, VH-VV,
 and RVI.
 
-No advanced SAR preprocessing (speckle filtering, terrain correction,
-coherence) is included.
+The loader itself does no SAR preprocessing beyond the Earth Engine
+ingestion default (orbit file, GRD border-noise removal, thermal-noise
+removal, radiometric calibration, terrain correction). Opt-in
+mono-temporal Gamma MAP speckle filtering for this preset is available
+via ``geecomposer.datasets.sentinel1_preprocessing.gamma_map`` wired
+through ``compose(..., preprocess=...)``; it is never auto-applied here.
+Other ARD steps (multi-temporal filtering, radiometric terrain
+flattening, additional border-noise correction) remain out of scope.
 """
 
 from __future__ import annotations

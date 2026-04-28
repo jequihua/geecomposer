@@ -1,12 +1,18 @@
-"""Sentinel-1 dB VV median composite over the case-study AOI.
+"""Sentinel-1 float + opt-in Gamma MAP + VH/VV ratio composite.
 
-Canonical radar workflow on the dB-scaled preset. For ratio or
-algebraic SAR features (VH/VV, RVI, ...), use ``sentinel1_float`` and
-see ``sentinel1_float_gamma_map.py``.
+This is the canonical biomass-style SAR feature workflow:
+
+1. load ``sentinel1_float`` (linear power units required for ratios)
+2. preprocess each image with ``gamma_map()`` (speckle reduction)
+3. transform per image with a VH/VV expression
+4. reduce across time with ``median``
+
+``gamma_map()`` is opt-in and is intended for ``sentinel1_float`` only.
+Applying it to dB-scaled imagery silently produces wrong values.
 
 Run from the repo root with:
 
-    .venv/Scripts/python.exe 08_pkg/examples/sentinel1_vv_median.py
+    .venv/Scripts/python.exe 08_pkg/examples/sentinel1_float_gamma_map.py
 
 Set ``START_EXPORT = True`` to launch a Drive export task.
 """
@@ -16,6 +22,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from geecomposer import compose, export_to_drive, initialize
+from geecomposer.datasets.sentinel1_preprocessing import gamma_map
+from geecomposer.transforms.expressions import expression_transform
 
 
 PROJECT = "manglariars"
@@ -26,24 +34,30 @@ AOI_PATH = (
     / "rbmn.geojson"
 )
 DRIVE_FOLDER = "geecomposer-dev"
-EXPORT_DESCRIPTION = "rbmn_s1_vv_median_2025"
+EXPORT_DESCRIPTION = "rbmn_s1f_vh_vv_ratio_gammamap_2025"
 START_EXPORT = False
 
 
 def main() -> None:
     initialize(project=PROJECT, authenticate=False)
 
+    vh_vv = expression_transform(
+        expression="vh / vv",
+        band_map={"vh": "VH", "vv": "VV"},
+        name="vh_vv_ratio",
+    )
+
     img = compose(
-        dataset="sentinel1",
+        dataset="sentinel1_float",
         aoi=str(AOI_PATH),
         start="2025-01-01",
         end="2025-12-31",
-        select="VV",
+        preprocess=gamma_map(),
+        transform=vh_vv,
         reducer="median",
         filters={
             "instrumentMode": "IW",
-            "polarizations": ["VV"],
-            "orbitPass": "ASCENDING",
+            "polarizations": ["VV", "VH"],
         },
     )
 
