@@ -110,11 +110,22 @@ Requires Python 3.11 or newer. Dependency minimums match the exercised local
 baseline; older versions are not claimed as supported. See
 [baseline repairs and qualification limits](docs/qualification.md).
 
-From the package root (the directory containing this README):
+From the package root (the directory containing this README), first activate
+your prepared project venv so `python` selects that environment. The command
+below works in Windows PowerShell and POSIX shells; dependency installation
+requires an approved package source.
 
-```powershell
-python -m pip install -e .[dev]
+```text
+python -m pip install -e ".[dev]"
 ```
+
+For offline review, prefer the [portable verifier](docs/verification.md), which
+keeps verification outputs in external scratch. An editable install creates
+`src/geecomposer.egg-info`; ordinary pytest may create caches. Ignored files can
+still affect later synchronization of managed directories. Do not treat a clean
+Git status as proof that those directories contain only the projected files.
+All example commands run from this package root. If the prepared venv is outside
+it, substitute that interpreter's explicit path for the shown `.venv` path.
 
 ## Quick Usage
 

@@ -5,9 +5,16 @@ ingredients for a `geecomposer` workflow: a dataset preset, an AOI, a
 date range, a cloud-mask preset, a single-band selection, and a
 temporal reducer.
 
-Run from the package root with:
+Run from the package root with a prepared project venv. Live evaluation
+requires separate authorization and explicit project/AOI inputs.
+
+Windows PowerShell:
 
     .venv/Scripts/python.exe examples/sentinel2_red_median.py
+
+POSIX shell:
+
+    .venv/bin/python examples/sentinel2_red_median.py
 
 Set ``START_EXPORT = True`` to launch a Drive export task.
 """

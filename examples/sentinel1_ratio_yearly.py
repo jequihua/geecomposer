@@ -10,9 +10,16 @@ For physically meaningful biomass-style features, prefer this float
 path. Combine with ``preprocess=gamma_map()`` for speckle reduction;
 see ``sentinel1_float_gamma_map.py`` for that variant.
 
-Run from the package root with:
+Run from the package root with a prepared project venv. Live evaluation
+requires separate authorization and explicit project/AOI inputs.
+
+Windows PowerShell:
 
     .venv/Scripts/python.exe examples/sentinel1_ratio_yearly.py
+
+POSIX shell:
+
+    .venv/bin/python examples/sentinel1_ratio_yearly.py
 
 Set ``START_EXPORT = True`` to launch one Drive export per year.
 """

@@ -14,6 +14,13 @@ an index. Initial environment setup requires an approved package source.
 .venv/bin/python tools/verify_offline.py
 ```
 
+Prefer this gate to a plain pytest invocation when reviewing a synchronized
+checkout. Editable installation can leave `src/geecomposer.egg-info`, and ordinary
+pytest can leave caches under managed directories. Git may ignore them, but a
+repeat sync can still propose deleting them. Review the exact sync plan and
+reconcile each unexpected path before applying; never use a routine overwrite
+flag or broad cleanup to conceal drift.
+
 An absolute path to another prepared venv interpreter also works. The gate uses
 that same interpreter for every child. It redirects home/config into disposable
 external scratch, clears credential variables, disables pytest plugin autoload,

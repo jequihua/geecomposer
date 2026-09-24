@@ -10,9 +10,16 @@ This is the canonical biomass-style SAR feature workflow:
 ``gamma_map()`` is opt-in and is intended for ``sentinel1_float`` only.
 Applying it to dB-scaled imagery silently produces wrong values.
 
-Run from the package root with:
+Run from the package root with a prepared project venv. Live evaluation
+requires separate authorization and explicit project/AOI inputs.
+
+Windows PowerShell:
 
     .venv/Scripts/python.exe examples/sentinel1_float_gamma_map.py
+
+POSIX shell:
+
+    .venv/bin/python examples/sentinel1_float_gamma_map.py
 
 Set ``START_EXPORT = True`` to launch a Drive export task.
 """

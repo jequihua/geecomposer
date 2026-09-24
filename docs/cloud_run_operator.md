@@ -46,10 +46,19 @@ syntactic acceptance does not establish institutional authority. The release ide
 circularity of embedding the final image digest in its own policy. Record the
 resulting immutable image digest and canonical policy hash together at release.
 
-Both shells, from the package root (use the relevant venv interpreter):
+From the package root with a prepared project venv. Policy preparation is
+offline; replace the private path placeholders with administrator-supplied files.
 
-```text
+Windows PowerShell:
+
+```powershell
 .venv/Scripts/python.exe -m geecomposer.deployment --mode policy --policy PRIVATE_POLICY --output PRIVATE_VALIDATED_POLICY
+```
+
+POSIX shell:
+
+```sh
+.venv/bin/python -m geecomposer.deployment --mode policy --policy PRIVATE_POLICY --output PRIVATE_VALIDATED_POLICY
 ```
 
 Outputs are exclusive UTF-8 files; existing files are never overwritten. Do not

@@ -159,9 +159,22 @@ a new private `--receipt` path (for example under ignored `tmp/rao-validation`).
 Do not track credentials or private validation receipts. The owner-authorized
 personal validation does not change the future cloud runner identity model.
 
+Run from the package root with a prepared project venv, only after separate
+live evaluation/export authorization. These commands explicitly opt into export;
+keep each receipt path private and fresh.
+
+Windows PowerShell:
+
 ```powershell
 .venv/Scripts/python.exe examples/validate_rao_drive.py --project YOUR_EE_PROJECT --receipt tmp/rao-validation/synthetic.json --start-export
 .venv/Scripts/python.exe examples/rao_sentinel_drive.py --project YOUR_EE_PROJECT --receipt tmp/rao-validation/sentinel.json --start-export
+```
+
+POSIX shell:
+
+```sh
+.venv/bin/python examples/validate_rao_drive.py --project YOUR_EE_PROJECT --receipt tmp/rao-validation/synthetic.json --start-export
+.venv/bin/python examples/rao_sentinel_drive.py --project YOUR_EE_PROJECT --receipt tmp/rao-validation/sentinel.json --start-export
 ```
 
 The synthetic example compares live EE pixels with an independent NumPy oracle
