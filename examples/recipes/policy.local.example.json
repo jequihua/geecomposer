@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "mode": "local",
+  "project": "geecomposer-example",
+  "service_account": "worker@geecomposer-example.iam.gserviceaccount.com",
+  "outputs": [
+    {
+      "bucket": "geecomposer-example-output",
+      "prefix": "products"
+    }
+  ],
+  "inputs": [
+    {
+      "bucket": "geecomposer-example-input",
+      "prefix": "recipes"
+    }
+  ],
+  "control": {
+    "bucket": "geecomposer-example-control",
+    "prefix": "runs"
+  },
+  "limits": {},
+  "poll_seconds": 15,
+  "image_version": "replace-with-reviewed-image-digest"
+}

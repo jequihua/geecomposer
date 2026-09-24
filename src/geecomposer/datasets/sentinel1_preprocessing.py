@@ -16,9 +16,7 @@ Scope is intentionally narrow:
 - no terrain flattening, no border-noise correction, no tide filtering,
   no SAR texture features
 
-This is not a Sentinel-1 ARD framework. See
-``docs/GEECOMPOSER_MILESTONE_007_S1_FLOAT_SPECKLE_FILTERING.md`` for the
-full context.
+This is not a Sentinel-1 ARD framework. See ``docs/baseline_repairs.md``.
 """
 
 from __future__ import annotations
@@ -31,8 +29,7 @@ import ee
 from ..exceptions import GeeComposerError
 
 # Equivalent number of looks for Sentinel-1 IW GRD. Fixed internally to
-# match the practical assumption used in the reference SAR ARD code in
-# 90_legacy_review/s1_correction.
+# match the documented practical assumption for this helper.
 _ENL = 5
 
 
@@ -74,15 +71,14 @@ def gamma_map(kernel_size: int = 7) -> Callable[[ee.Image], ee.Image]:
     International Geoscience and Remote Sensing Symposium (IGARSS).
 
     The equivalent number of looks (ENL) is fixed at 5, matching the
-    practical assumption for Sentinel-1 IW GRD used in the reference
-    SAR ARD code at ``90_legacy_review/s1_correction``.
+    practical assumption for this Sentinel-1 IW GRD helper.
 
     This helper is mono-temporal and per-image. Multi-temporal filtering,
     radiometric terrain flattening, and additional border-noise correction
     are intentionally not part of this helper.
     """
     _validate_kernel_size(kernel_size)
-    radius = kernel_size / 2
+    radius = (kernel_size - 1) // 2
 
     def _gamma_map(image: ee.Image) -> ee.Image:
         band_names = image.bandNames().remove("angle")
@@ -101,44 +97,39 @@ def gamma_map(kernel_size: int = 7) -> Callable[[ee.Image], ee.Image]:
         z = stats.select(mean_bands)
         sig_z = stats.select(std_bands)
 
-        ci = sig_z.divide(z)
-        cu_val = 1.0 / math.sqrt(_ENL)
-        cmax_val = math.sqrt(2.0) * cu_val
-
-        cu = ee.Image.constant(cu_val)
-        cmax = ee.Image.constant(cmax_val)
-        enl_img = ee.Image.constant(_ENL)
-        one_img = ee.Image.constant(1)
-        two_img = ee.Image.constant(2)
-
-        alpha = one_img.add(cu.pow(2)).divide(ci.pow(2).subtract(cu.pow(2)))
-
-        q = image.select(band_names).expression(
-            "z**2 * (z * alpha - enl - 1)**2 + 4 * alpha * enl * b() * z",
-            {"z": z, "alpha": alpha, "enl": _ENL},
+        filtered = _gamma_map_estimate(
+            image.select(band_names), z.rename(band_names), sig_z.rename(band_names)
         )
-        r_hat = (
-            z.multiply(alpha.subtract(enl_img).subtract(one_img))
-            .add(q.sqrt())
-            .divide(two_img.multiply(alpha))
-        )
-
-        # ci <= cu       -> homogeneous region; use neighbourhood mean
-        z_hat = z.updateMask(ci.lte(cu)).rename(band_names)
-        # cu < ci < cmax -> textured medium; use Gamma MAP estimate
-        r_hat = (
-            r_hat.updateMask(ci.gt(cu))
-            .updateMask(ci.lt(cmax))
-            .rename(band_names)
-        )
-        # ci >= cmax     -> strong scatterer; retain original value
-        x = image.select(band_names).updateMask(ci.gte(cmax)).rename(band_names)
-
-        filtered = ee.ImageCollection([z_hat, r_hat, x]).sum()
         return image.addBands(srcImg=filtered, names=None, overwrite=True)
 
     _gamma_map.__name__ = f"gamma_map(kernel_size={kernel_size})"
     return _gamma_map
+
+
+def _gamma_map_estimate(x, mean, stddev):
+    """Gamma-prior MAP root; preserve the original center mask.
+
+    Discriminant: mean**2 * (alpha - ENL - 1)**2 + 4*alpha*ENL*mean*x.
+    Zero-mean nonnegative windows are homogeneous zero windows. Unused
+    branches have safe denominators so threshold/constant cases stay finite.
+    """
+    cu = 1 / math.sqrt(_ENL)
+    cmax = math.sqrt(2) * cu
+    ci = stddev.divide(mean.where(mean.eq(0), 1))
+    denominator = ci.pow(2).subtract(cu**2)
+    alpha = denominator.where(denominator.lte(0), 1).pow(-1).multiply(1 + cu**2)
+    b = alpha.subtract(_ENL + 1)
+    discriminant = (
+        mean.pow(2)
+        .multiply(b.pow(2))
+        .add(alpha.multiply(4 * _ENL).multiply(mean).multiply(x))
+    )
+    estimate = mean.multiply(b).add(discriminant.sqrt()).divide(alpha.multiply(2))
+    return (
+        mean.where(ci.gt(cu).And(ci.lt(cmax)), estimate)
+        .where(ci.gte(cmax), x)
+        .updateMask(x.mask())
+    )
 
 
 def _validate_kernel_size(kernel_size: int) -> None:

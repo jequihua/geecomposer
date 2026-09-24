@@ -1,0 +1,365 @@
+# Version 1 recipe runner
+
+The installed `geecomposer` command uses the same package science functions for
+local and hosted execution. The library/notebook APIs retain their defaults,
+custom callables, interactive initialization and unstarted Drive/GCS tasks.
+The runner is a separate, strict institutional boundary. No cloud execution was
+performed during its offline implementation; see [validation evidence](qualification.md).
+
+## Offline commands
+
+From the package directory, after installation:
+
+```text
+geecomposer --help
+geecomposer validate examples/recipes/sentinel2_ndvi.json
+geecomposer run --recipe examples/recipes/yearly_ratio.json --dry-run
+geecomposer --policy examples/recipes/policy.local.example.json validate examples/recipes/rao_gn.json
+```
+
+Validation reads at most 1 MiB from a regular UTF-8 JSON file. Neither validation
+nor dry-run initializes EE, discovers credentials, contacts metadata or opens a
+network connection. Supplying a local policy additionally checks its allowlists
+and lower ceilings. Without policy these commands check the fixed C envelope;
+that is not authorization for an online run.
+
+Output is JSON with task count (or `null` when seasonal selection is unknown),
+resource ceilings, a conservative pixel bound when computable offline, scene
+count `null`, and pair/band/scene/pixel work bounds. Projected-grid bounds, scene
+counts, available observations and actual permissions require bounded online
+preflight. A dry-run is not a promise of data or successful execution. Hosted
+input cannot be downloaded by an offline command: validate its local copy before
+uploading it through the institution's approved tooling.
+
+**Seasonal output warning:** `scene_outputs` still defaults to `true`. Validate
+and dry-run emit `warnings` with code `seasonal_scene_output_limit`, two
+`fixed_outputs`, and `allowed_scene_outputs = effective outputs ceiling - 2`
+(normally eight at ceiling ten). Task count remains `null`. Seasonal evaluation
+may be expensive before selection count is known. `scene_outputs: false` avoids
+scene exports and leaves two fixed products; even those require capacity for two.
+The runner never clips selected scenes or changes this setting automatically.
+
+## Recipe shape
+
+See the six small [example JSON files](../examples/recipes/). Examples contain
+illustrative resources, not production defaults. Every object rejects unknown
+fields. All JSON keys must be unique; booleans are not numbers. NaN, infinities,
+overflowing numbers, malformed dates, duplicate bands/years, invalid polygon
+topology, open rings, arbitrary URLs/paths, expressions, code and asset IDs fail.
+
+| Field | Contract |
+| --- | --- |
+| `version` | Integer `1`. |
+| `workflow` | `composite`, `yearly`, `rao`, `seasonal_nirv`. |
+| `dataset` | `sentinel2`, `sentinel1` (dB), `sentinel1_float` (linear). |
+| `aoi` | Inline 2D GeoJSON Polygon/MultiPolygon, WGS84 lon/lat. No Feature wrappers, vector-driver paths or references. Latitudes within -85..85; antimeridian-crossing rings are rejected. Holes must be valid. Edges use `geodesic=False`. |
+| `grid` | `{crs, transform}`; six finite invertible affine coefficients. CRS is EPSG:4326, EPSG:3857, or EPSG:32601..32660/32701..32760. Other CRS definitions are rejected rather than interpreted. |
+| `destination` | `{bucket, prefix}`. Bare lowercase bucket from the administrator allowlist, relative slash-separated prefix. Version 1 admits simple hyphenated bucket names; no dotted buckets. |
+| `bands` | 1..12 distinct actual Sentinel bands, not regex selectors. S2: B1..B9 including B8A, B11/B12; S1: VV/VH/HH/HV/angle. |
+| `start`, `end` | Real `YYYY-MM-DD` dates, half-open interval. Required except for yearly. |
+| `years` | Yearly only; 1..10 distinct integers 1..9998, replacing dates. |
+| `reducer` | Optional existing median (default), mean, min, max, mosaic or count. |
+| `transform` | Optional identity (default), ndvi, nirv, vh_vv_ratio. Indices need B4/B8; ratio requires linear VV/VH. NIRv uses S2's explicit 0.0001 reflectance factor. No caller expression strings. |
+| `mask` | Optional `s2_cloud_score_plus`, only for S2 ordinary composites/Rao. |
+| `preprocess` | Optional `gamma_map`, only for S1 float, with existing default 7-cell window. |
+| `filters` | S1 only: instrumentMode IW/EW/SM, orbitPass ASCENDING/DESCENDING, distinct polarizations VV/VH/HH/HV. Existing IW default remains. |
+| `rao` | Rao workflow only: required normalization raw/gn, optional window_size (default 3), decimal_places (default null; integer 0..9 or null). Strict complete windows remain the library default. |
+| `seasonal` | Seasonal only: optional reference_start/reference_end (default output interval), window_size (3), decimal_places (2 or explicit null), scene_outputs (true). |
+| `limits` | Optional integer decreases to administrator ceilings. No upward overrides. |
+
+Ordinary Rao is computed on the named temporal composite. GN fits once over the
+explicit AOI and grid, and persists its model and fingerprint. Seasonal NIRv
+uses the existing per-observation public workflow: WorldCover v200, SCL 4/5,
+strict support, exact 0.90 quantile with strict `>`, and default normalization
+and rounding. It exports mean and observation-count rasters, optionally every
+selected scene raster. All scene summaries/site estimate/calibration identities
+are stored privately. More than 10 requested exports fails before submission;
+there is no first-N selection. The seasonal example explicitly requests only
+mean/count exports. Use an appropriate aligned 20 m grid for the combined
+protocol; the runner never silently changes the requested grid.
+
+Scene IDs are snapshotted before graph construction. An extra sentinel entry in
+the bounded metadata query detects catalogue growth after the count check; it
+causes rejection. The adapter builds an explicit ImageCollection snapshot and
+calls the existing compose/compose_yearly/rao_q/fit_normalization/seasonal APIs.
+`compose(collection=...)` now also documents ImageCollection snapshots and marks
+their metadata `explicit_snapshot`. No scientific algorithms or defaults changed.
+Resume reuses saved source IDs and checks the rebuilt native config/provenance
+fingerprints. It fails closed on changed calibration or graph configuration.
+
+## Policy, identity and hosted packaging
+
+An administrator policy has exactly: `version`, `mode`, `project`,
+`service_account`, `outputs`, `inputs`, `control`, `limits`, `poll_seconds`,
+`image_version`. Location entries are `{bucket, prefix}`. Output and control
+buckets must differ because mutable control state needs conditional replacement
+permissions while raster output should have no delete permission. Prefix matches
+include a slash boundary, never a mere textual prefix. No permissive policy is
+installed by default.
+
+The local operator supplies `--policy policy.json` before the command. The
+example policy is illustrative and uses `mode: local`. Local online execution
+currently requires running on a platform with the approved attached identity.
+Federation/impersonation, downloaded keys and personal refresh credentials are
+not supported. Off-cloud users can validate/dry-run; unsupported online identity
+fails clearly rather than falling back to a personal account.
+
+The hosted build must place a reviewed `runtime_policy.json` beside `geecomposer/cli.py` in a
+read-only image layer, set its `mode` to `hosted`, and record the reviewed image
+version/digest. The hosted Docker target validates an explicit administrator policy input and
+adds that exact file after installing the general wheel; the wheel excludes it. It is deliberately absent here. Its presence makes hosted mode
+mandatory: arguments cannot switch to local mode, supply another policy path,
+change project/account, or read a local recipe. `--hosted` also requires that
+bundle; it cannot manufacture a hosted policy. Do not make its path an environment
+variable, caller-writable mount, symlink into caller storage or job override.
+Protect the image, command, Python import paths, package installation and policy
+from modification. This CLI does not sandbox arbitrary code launched by someone
+with container/deployment override authority. Deployers must restrict that authority
+and use dedicated jobs/accounts for separate cohorts, as designed.
+
+Production authentication bypasses ADC discovery entirely. It contacts only
+the fixed metadata IP with Metadata-Flavor verification, no ambient proxy or
+redirect, checks the actual attached account against policy, then obtains the
+token from that same attached-account endpoint. Refresh repeats principal
+verification. An asserted email, discovery string, generic compute credential,
+OAuth refresh credential or service-account key object is not accepted as proof.
+Credential-file, metadata-endpoint, storage-emulator and universe overrides are
+rejected. Verified identity precedes EE initialization or creation/use of a
+storage client. EE and GCS transports restrict origins, disable ambient proxies
+and redirects, and use finite timeouts. No EE login or persistent credentials are
+written. Unsupported federation/impersonation must remain rejected until both
+source chain and target have an approved validator.
+
+Hosted execution takes an approved, generation-pinned object:
+
+```text
+geecomposer run --recipe gs://APPROVED-INPUT/recipes/example.json --recipe-generation GENERATION --run-id RUN_ID
+geecomposer status --run-id RUN_ID
+geecomposer cancel --run-id RUN_ID
+geecomposer resume --run-id RUN_ID
+```
+
+Replace placeholders with institution-provided values; this documentation does
+not authorize invocation. Download metadata must fit the byte ceiling before
+allocation; the download also has an explicit byte range, raw bytes and generation
+precondition. The canonical recipe, source generation, complete effective policy,
+package version and image setting participate in the run binding. Local paths
+are not recorded; local source identity is a content hash. Hosted AOIs are inline
+bounded JSON, not arbitrary vector files. External upload/invocation tooling and
+deployment require explicit authorization; no upload/publish helper runs implicitly.
+
+## Runtime Earth Engine permissions
+
+The attached runtime principal needs `serviceusage.services.use` on the enabled,
+registered EE consumer project, plus the following EE permissions. Project
+membership or successful initialization is not proof of these grants.
+
+| Runner activity | Exact permission |
+| --- | --- |
+| Synchronous scene/count/grid/calibration computation | `earthengine.computations.create` |
+| Create batch image export | `earthengine.exports.create` |
+| Discover an operation by its marker | `earthengine.operations.list` |
+| Read actual operation status | `earthengine.operations.get` |
+| Request asynchronous cancellation | `earthengine.operations.update` |
+
+[ComputeValue](https://developers.google.com/earth-engine/reference/rest/v1/projects.value/compute)
+and [image export](https://developers.google.com/earth-engine/reference/rest/v1/projects.image/export)
+specify their permissions. Google's [audit-method mapping](https://developers.google.com/earth-engine/guides/audit_logging#googlelongrunningoperations)
+explicitly maps List/Get/CancelOperation to list/get/update respectively; there
+is no invented `earthengine.operations.cancel` grant. Cancellation does not delete
+an operation or prove it stopped.
+
+[Resource Writer](https://docs.cloud.google.com/iam/docs/roles-permissions/earthengine)
+includes these permissions and broader asset/configuration powers; it is an
+administrator-reviewed fallback, not an automatic grant. Viewer lacks export
+creation and operation update. A custom role must retain the API/source read and
+configuration access needed by the approved workflows; administrators must
+qualify it against [EE service-usage requirements](https://developers.google.com/earth-engine/guides/access_control).
+No Owner/Editor role is proposed. Runtime EE permissions do not grant Storage
+access. Launchers need job get/run-with-overrides (and input create for upload),
+not runtime EE powers. Deployers/builders are separate identities. The
+[administrator request](institutional_admin_request.md) has the
+matching inventory; institutional approval remains pending. These documents do not modify IAM.
+
+## Runtime Storage permissions
+
+The institutional permission review must account for these actual
+runner calls. This is a permission inventory, not a role grant or IAM change.
+
+| Resource / call | Required permission |
+| --- | --- |
+| Output and control bucket metadata preflight (`buckets.get`) | `storage.buckets.get` on both buckets. |
+| Generation-pinned input metadata and bytes (`objects.get`) | `storage.objects.get` on approved inputs. No input listing or writes. |
+| Exact-run output listing, including size, generation and checksum metadata | `storage.objects.list` on the output bucket; this implementation uses listing metadata, not a separate object GET. |
+| New raster objects delivered by EE | `storage.objects.create` on approved outputs. No output overwrite/delete authority is requested. |
+| Private control metadata and bytes | `storage.objects.get` on control records. |
+| Initial control reservation and generation-conditional replacement | `storage.objects.create`, plus `storage.objects.delete` for replacement of the same object name, scoped to control storage. No explicit delete request is made. |
+
+These mappings follow Google's [JSON-method permissions](https://docs.cloud.google.com/storage/docs/access-control/iam-json).
+Conditional replacement still needs overwrite authority; a generation condition
+does not waive it. See [objects.insert](https://docs.cloud.google.com/storage/docs/json_api/v1/objects/insert).
+Output and control buckets are separate so control replacement authority does
+not confer output deletion. `storage.objects.update` is not a substitute for
+content replacement. No bucket creation or IAM mutation permission is used.
+
+The library `export_to_gcs` helper builds an unstarted EE task without Storage
+metadata preflight; the runner adds bucket reads and inventory verification.
+Object-only access that suffices for a library export is therefore insufficient
+for runner preflight. Readable metadata does not prove export-write access.
+Administrators must independently qualify the approved runtime principal, EE project,
+output delivery and control replacement under the institution's policy; no live
+permission check or IAM change is authorized by this document.
+
+## Resource and request budgets
+
+Hard ceilings are 1 MiB recipe; 10,000 vertices; 12 input dimensions; odd windows
+through 7; 10 outputs; 10 million pixels/output; 1,000 source scenes across the
+run; 1 million calibration-grid pixels; 2 active exports; 1,800 seconds application
+time; 3 transient status retries. Policy and recipe can lower these ceilings.
+Policy chooses polling in 15..60 seconds. The application reserves its last 60
+seconds for cancellation/finalization, with an injectable clock in tests.
+Source counts, projected enclosing grid rectangles and calibration extents are
+checked before submission, without sampling, grid coarsening or silent truncation.
+
+Metadata, preflight, graph evaluations, export, status and storage calls have at
+most 10-second request timeouts and share the application budget. Native EE
+automatic retries are disabled. Only transient status failures retry (three
+retries, bounded 15/30/60-second exponential backoff plus deterministic per-ID
+jitter, capped at 60); unknown responses and permission failures do not. Storage
+operations use `retry=None`, and no ambiguous conditional write is blindly
+retried. Deadline checks run inside the EE HTTP transport, including the seasonal
+helper's synchronous evaluations. GCS pagination checks deadlines on every
+request. Response bodies and inventory pages are bounded. Socket timeouts and
+application checks are not an OS hard-kill guarantee; deployment still needs the planned
+35-minute platform timeout. No host process is killed by the runner.
+
+## Persistence, recovery and cancellation
+
+1. Validate inputs and policy; verify attached identity. Inspect existing bucket
+   metadata. HTTP 404 is reported as absent according to that API, 401/403 as
+   inaccessible with existence unknown, other failures as unknown. Never create
+   buckets or change IAM. A readable bucket does not prove export-write access.
+2. Reserve `control-prefix/RUN_ID.json` with `if_generation_match=0`. The bounded
+   private record contains canonical recipe, source/binding, project/principal,
+   versions and an output prefix `user-prefix/RUN_ID-random-UUID/`. Reusing an ID
+   with `run` returns conflict, including after success. Use explicit `resume`.
+3. Build bounded native unstarted configs and save the source/provenance plan.
+   Obtain each explicit `ee.data.newTaskId()` request ID. Derive description
+   `gc-` plus SHA-256 of canonical `[request_id, run_binding, product_name]`:
+   67 characters, below the supported 100-character limit, with no raw private
+   fields. Persist immutable ID, marker and the final marked config fingerprint
+   before submission. Resume reconstructs that identical config. No private
+   Task fields are touched; configs go to `ee.data.exportImage`.
+4. CAS each product from prepared to submitting **before** export. Save the
+   returned operation name. A request UUID is not an operation ID. If the name
+   was lost, enumerate the configured project's operations, matching the exact
+   `metadata.description` marker. Use at most five pages of 100 operations,
+   1 MiB/page and 10 seconds/request within the existing deadline; no automatic
+   discovery retry or unbounded `ee.data.listOperations`. Complete enumeration
+   must yield exactly one match. Save that name with CAS before status/cancel
+   uses it, retaining the previous owner while reconciling before takeover.
+   Zero/ambiguous matches, malformed records, unavailable listing, repeated
+   tokens or incomplete enumeration leave uncertainty. Identity/permission
+   failures propagate auth (exit 3), with unresolved remote work still pending;
+   absence never proves
+   non-submission. Never allocate a replacement ID or resend that intent.
+5. A 120-second ownership lease and generation-match writes fence overlapping
+   workers. The owner renews during work; only one CAS takeover wins. A stale
+   worker cannot persist a new intent. An already persisted intent stays
+   unresolved until reconciled, even after lease expiration. No claim of
+   distributed exactly-once execution is made.
+6. After a crash, wait for the lease to expire, then explicitly resume. Resume
+   reconciles original submitted intents before takeover. Prepared IDs are provably
+   unsubmitted under the intent protocol; they retain their IDs/config hashes.
+   A crash just after intent but before the HTTP send can therefore remain
+   uncertain. Do not erase the reservation, manually reset submitting to prepared,
+   or run a new ID as a retry while the original export remains unresolved.
+7. `cancel` on an owned run CAS-writes a stop request and returns cancelling.
+   The owner observes it at its next fenced write/heartbeat, cancels pending
+   exports and retains partial objects. SIGINT/SIGTERM request the same cleanup
+   through normal control flow. If the owner crashed, invoke cancel again after
+   lease expiration. Resume of a stopped/expired run only finalizes/cancels; it
+   never extends the original work deadline. Cleanup has its own at-most-60-second
+   window within that invocation's overall budget.
+
+Cancellation is asynchronous. `remote_pending: true` and uncertain cancellation
+mean EE work may survive the worker. Inspect the private task's `marker`, original `request_id`, product name and
+saved operation name. An authorized operator can use the configured project's
+[operations listing](https://developers.google.com/earth-engine/reference/rest/v1/projects.operations/list)
+and compare [metadata.description](https://developers.google.com/earth-engine/reference/rest/Shared.Types/OperationMetadata)
+for exact equality with that marker, then inspect/cancel the full returned
+`projects/PROJECT/operations/OPERATION` name. Do not query the request UUID as an
+operation or match only a product name. Retain service evidence privately.
+After visibility catches up, explicit resume/cancel can rediscover within the
+same bounds. Eventual visibility, retention and a project with more than 500
+listed operations can prevent automatic recovery; missing evidence cannot
+justify a replacement run. Older manifests without a marker fail uncertain;
+do not synthesize one, edit intent state, or erase the reservation. Obtain
+institution/operator evidence and an authorized recovery decision.
+`status` reads the persisted snapshot and does not silently resume or refresh all
+EE statuses. Explicit resume performs reconciliation. State conflicts or lost
+write acknowledgements stop the current worker immediately; they are not a
+reason to overwrite another generation. Failed/cancelled rasters are never deleted.
+
+## Completion and private evidence
+
+Success requires every planned task to report COMPLETED and a verified exact-run
+object inventory. Every required product must have a nonempty `.tif` or EE
+`image-row-column.tif` shards in its own product directory. Reject unexpected or
+duplicate object names, zero sizes, missing generations, absent/invalid available
+CRC32C/MD5 metadata, incomplete product inventory and inventories above 512 objects.
+GCS listing is fully consumed within its bounds; there is no first-page success.
+This verifies service-reported checksums and inventory, not downloaded raster
+bytes or scientific pixel values. Completed EE status plus object listing cannot
+prove continued retention against later external deletion; production qualification
+still needs the prescribed exported-raster audit.
+
+The private control record is also the manifest, at most 1 MiB. It retains method
+parameters via canonical recipe, grid, float64 dtype/nodata -9999, source scene
+IDs, GN models/fingerprints, seasonal coverage/summary data, tasks/operations,
+bounded status categories and actual object names/generations/sizes/checksums.
+Oversized provenance fails before export rather than truncating evidence. Every
+export explicitly converts bands to double and uses the computation affine grid;
+missing observations are never unmasked before science. No raster bytes enter
+the worker. Protect control storage as private data. Shared CLI JSON contains only
+run/status, task names/states, destination/manifest and verified successful output
+links. It never includes full recipes/AOIs, tokens or raw external exception text.
+
+| Status | Exit | Meaning |
+| --- | --- | --- |
+| validated, dry_run, succeeded | 0 | Offline validation/estimate, or verified terminal success, respectively. |
+| validation | 2 | Input/schema/resource/argument failure. |
+| auth | 3 | Identity, allowlist, permission or required-bucket access failure. |
+| no_data | 4 | Empty scene collection or unusable calibration/season. |
+| conflict | 5 | Reserved ID, active ownership, changed binding/configuration or failed CAS. |
+| uncertain | 6 | Unknown submission/state outcome, unreconciled cancellation or unavailable response. |
+| deadline | 7 | Original work deadline reached; inspect remote_pending and original task IDs. |
+| cancelled | 8 | Cancellation finalized; submitted tasks are known terminal, other tasks unsubmitted. |
+| export | 9 | EE terminal export failure; partial evidence retained and siblings cancelled best effort. |
+| running, cancelling | 10 | Persisted nonterminal run or pending stop request. |
+| artifact | 11 | Missing/invalid output inventory or private manifest/provenance budget failure. |
+
+## Primary API references
+
+- [Native GCS export](https://developers.google.com/earth-engine/apidocs/export-image-tocloudstorage)
+  and [export grids](https://developers.google.com/earth-engine/guides/exporting_images).
+- [Export request IDs and operation response](https://developers.google.com/earth-engine/reference/rest/v1/projects.image/export).
+- [Storage generation preconditions](https://docs.cloud.google.com/storage/docs/request-preconditions).
+- [Attached metadata service](https://docs.cloud.google.com/compute/docs/metadata/overview),
+  [job service identity](https://docs.cloud.google.com/run/docs/configuring/jobs/service-identity)
+  and [EE service accounts](https://developers.google.com/earth-engine/guides/service_account).
+
+The installed EE newTaskId/exportImage/Task.start/status and google-auth metadata
+refresh implementations were also inspected. Live identity, IAM, real EE/GCS
+timing/reconciliation, exported data, Docker and Cloud Run remain unqualified here.
+
+## Pending live snapshot equivalence
+
+Offline dependency tests establish graph ancestry, not server-side equality.
+Separate authorization is required for a small live
+comparison of catalog-loaded and explicit-snapshot paths. That comparison must
+check identical `system:index` identities and properties, Cloud Score+ linkage
+by that index and resulting masks, and seasonal grouping by acquisition time,
+spacecraft and orbit (including same-observation tiles). Compare selected groups,
+thresholds and output pixels on the same bounded grid and dates. No live
+snapshot-equivalence claim is made here; scientific defaults are unchanged.

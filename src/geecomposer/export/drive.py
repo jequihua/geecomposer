@@ -6,6 +6,7 @@ Creates Earth Engine export tasks for writing GeoTIFF images to Google Drive.
 from __future__ import annotations
 
 from typing import Any
+import math
 
 import ee
 
@@ -18,9 +19,12 @@ def export_to_drive(
     description: str,
     folder: str,
     region: Any,
-    scale: int | float,
+    scale: int | float | None = None,
     file_name_prefix: str | None = None,
     max_pixels: float = 1e13,
+    *,
+    crs: str | None = None,
+    crs_transform: list[float] | tuple[float, ...] | None = None,
 ) -> ee.batch.Export.image:
     """Create an Earth Engine export task for Google Drive.
 
@@ -42,11 +46,13 @@ def export_to_drive(
         ``ee.FeatureCollection``, a GeoJSON dict, or a local vector file
         path.
     scale:
-        Pixel resolution in meters.
+        Pixel resolution in meters. Omit when supplying an exact affine grid.
     file_name_prefix:
         Optional filename prefix. Defaults to *description* if not provided.
     max_pixels:
         Maximum number of pixels to export. Defaults to 1e13.
+    crs, crs_transform:
+        Explicit export grid. Affine transform requires CRS and excludes scale.
 
     Returns
     -------
@@ -63,6 +69,33 @@ def export_to_drive(
     if not isinstance(folder, str) or not folder.strip():
         raise GeeComposerError("folder must be a non-empty string.")
 
+    if isinstance(max_pixels, bool) or not math.isfinite(max_pixels) or max_pixels <= 0:
+        raise GeeComposerError("max_pixels must be positive and finite")
+    options = {}
+    if crs_transform is not None:
+        if scale is not None:
+            raise GeeComposerError("scale and crs_transform are mutually exclusive")
+        from ..rao import RaoGrid
+
+        try:
+            grid = RaoGrid(crs, crs_transform)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise GeeComposerError("invalid affine export grid") from exc
+        options.update(crs=grid.crs, crsTransform=list(grid.transform))
+    else:
+        if (
+            scale is None
+            or isinstance(scale, bool)
+            or not math.isfinite(scale)
+            or scale <= 0
+        ):
+            raise GeeComposerError("scale must be positive and finite")
+        options["scale"] = scale
+        if crs is not None:
+            if not isinstance(crs, str) or not crs.strip():
+                raise GeeComposerError("crs must be nonempty")
+            options["crs"] = crs
+
     geometry = to_ee_geometry(region)
 
     task = ee.batch.Export.image.toDrive(
@@ -70,9 +103,9 @@ def export_to_drive(
         description=description,
         folder=folder,
         region=geometry,
-        scale=scale,
         fileNamePrefix=file_name_prefix or description,
         maxPixels=max_pixels,
+        **options,
     )
 
     return task

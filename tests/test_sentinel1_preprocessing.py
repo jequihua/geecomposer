@@ -147,18 +147,18 @@ class TestGammaMapBehavior:
         band_names.remove.assert_called_once_with("angle")
 
     @patch("geecomposer.datasets.sentinel1_preprocessing.ee")
-    def test_uses_square_kernel_with_half_kernel_size_radius(
+    def test_uses_square_kernel_with_integer_radius(
         self, mock_ee: MagicMock
     ) -> None:
-        """Kernel radius must be ``kernel_size / 2`` in pixel units, matching
-        the legacy SAR ARD reference behavior."""
+        """Kernel radius must be ``(kernel_size - 1) / 2`` in pixel units, matching
+        the requested odd pixel footprint (the legacy code used k/2)."""
         from geecomposer.datasets.sentinel1_preprocessing import gamma_map
 
         image = MagicMock(name="image")
         fn = gamma_map(kernel_size=7)
         fn(image)
 
-        mock_ee.Kernel.square.assert_called_with(3.5, "pixels")
+        mock_ee.Kernel.square.assert_called_with(3, "pixels")
 
     @patch("geecomposer.datasets.sentinel1_preprocessing.ee")
     def test_custom_kernel_size_propagates_to_kernel(
@@ -170,7 +170,7 @@ class TestGammaMapBehavior:
         fn = gamma_map(kernel_size=5)
         fn(image)
 
-        mock_ee.Kernel.square.assert_called_with(2.5, "pixels")
+        mock_ee.Kernel.square.assert_called_with(2, "pixels")
 
     @patch("geecomposer.datasets.sentinel1_preprocessing.ee")
     def test_returns_addbands_result_with_overwrite(

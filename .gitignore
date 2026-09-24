@@ -27,5 +27,9 @@ Thumbs.db
 node_modules/
 tmp/
 .cache/
-08_pkg/.pytest_tmp/
-08_pkg/pytest-cache-files-*/
+
+# Private operator inputs and local evidence
+private/
+runtime_policy.json
+*.pem
+*.key

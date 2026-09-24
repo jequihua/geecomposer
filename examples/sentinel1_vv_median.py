@@ -1,43 +1,41 @@
-"""Sentinel-1 dB VV median composite over the case-study AOI.
+"""Sentinel-1 dB VV median composite over an explicit user-supplied AOI.
 
 Canonical radar workflow on the dB-scaled preset. For ratio or
 algebraic SAR features (VH/VV, RVI, ...), use ``sentinel1_float`` and
 see ``sentinel1_float_gamma_map.py``.
 
-Run from the repo root with:
+Run from the package root with:
 
-    .venv/Scripts/python.exe 08_pkg/examples/sentinel1_vv_median.py
+    .venv/Scripts/python.exe examples/sentinel1_vv_median.py
 
 Set ``START_EXPORT = True`` to launch a Drive export task.
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from geecomposer import compose, export_to_drive, initialize
 
 
-PROJECT = "manglariars"
-AOI_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "01_data"
-    / "case_studies"
-    / "rbmn.geojson"
-)
+PROJECT = os.environ.get("GEECOMPOSER_PROJECT")
+AOI_PATH = Path(os.environ["GEECOMPOSER_AOI"]) if "GEECOMPOSER_AOI" in os.environ else None
 DRIVE_FOLDER = "geecomposer-dev"
-EXPORT_DESCRIPTION = "rbmn_s1_vv_median_2025"
+EXPORT_DESCRIPTION = "geecomposer_s1_vv_median_2025"
 START_EXPORT = False
 
 
 def main() -> None:
+    if not PROJECT or AOI_PATH is None:
+        raise SystemExit("Set GEECOMPOSER_PROJECT and GEECOMPOSER_AOI explicitly before running")
     initialize(project=PROJECT, authenticate=False)
 
     img = compose(
         dataset="sentinel1",
         aoi=str(AOI_PATH),
         start="2025-01-01",
-        end="2025-12-31",
+        end="2026-01-01",
         select="VV",
         reducer="median",
         filters={

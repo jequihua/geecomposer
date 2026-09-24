@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from geecomposer.exceptions import GeeComposerError, InvalidAOIError
+from geecomposer.exceptions import GeeComposerError
 
 
 POLYGON_GEOJSON = {

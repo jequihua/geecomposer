@@ -26,11 +26,13 @@ def validate_filters(filters: dict) -> None:
     - ``polarizations`` is a non-empty list or tuple of non-empty strings
       (if present)
     """
+    if not isinstance(filters, dict):
+        raise GeeComposerError("filters must be a dict")
     unsupported = set(filters.keys()) - set(SUPPORTED_FILTERS)
     if unsupported:
         supported = ", ".join(SUPPORTED_FILTERS)
         raise GeeComposerError(
-            f"Unsupported Sentinel-1 filter keys: {sorted(unsupported)}. "
+            f"Unsupported Sentinel-1 filter keys: {sorted(map(str, unsupported))}. "
             f"Supported filters: {supported}."
         )
 
@@ -61,3 +63,12 @@ def validate_filters(filters: dict) -> None:
                     f"polarizations[{i}] must be a non-empty string, "
                     f"got {type(pol).__name__}."
                 )
+
+    if "instrumentMode" in filters and filters["instrumentMode"] not in ("IW", "EW", "SM"):
+        raise GeeComposerError("instrumentMode must be IW, EW or SM")
+    if "orbitPass" in filters and filters["orbitPass"] not in ("ASCENDING", "DESCENDING"):
+        raise GeeComposerError("orbitPass must be ASCENDING or DESCENDING")
+    if "polarizations" in filters:
+        values = filters["polarizations"]
+        if any(p not in ("VV", "VH", "HH", "HV") for p in values) or len(set(values)) != len(values):
+            raise GeeComposerError("polarizations must be unique VV, VH, HH or HV values")

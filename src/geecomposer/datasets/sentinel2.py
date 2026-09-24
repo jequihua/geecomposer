@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import ee
 
+from ..validation import validate_dates, reject_extra_filters
+
 COLLECTION_ID = "COPERNICUS/S2_SR_HARMONIZED"
 
 SUPPORTED_MASKS: tuple[str, ...] = ("s2_cloud_score_plus",)
@@ -38,14 +40,15 @@ def load_collection(
     start, end:
         ISO date strings for temporal filtering.
     filters:
-        Optional extra metadata filters (currently unused for Sentinel-2 but
-        accepted for interface consistency with other dataset modules).
+        No extra filters are supported; only None or an empty dict is accepted.
 
     Returns
     -------
     ee.ImageCollection
         The filtered Sentinel-2 collection.
     """
+    validate_dates(start, end)
+    reject_extra_filters(filters)
     col = (
         ee.ImageCollection(COLLECTION_ID)
         .filterBounds(aoi)

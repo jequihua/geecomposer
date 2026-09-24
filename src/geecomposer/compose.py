@@ -24,10 +24,16 @@ import ee
 
 from .aoi import to_ee_geometry
 from .datasets import sentinel1, sentinel1_float, sentinel2
+from .datasets import _sentinel1_filters
 from .exceptions import DatasetNotSupportedError, GeeComposerError
 from .reducers.temporal import apply_reducer
 from .utils.metadata import build_metadata_payload
-from .validation import validate_dataset
+from .validation import (
+    validate_dataset,
+    validate_reducer,
+    validate_dates,
+    reject_extra_filters,
+)
 
 # Maps validated dataset names to their loader modules.
 _DATASET_MODULES: dict[str, Any] = {
@@ -38,7 +44,7 @@ _DATASET_MODULES: dict[str, Any] = {
 
 
 def compose(
-    collection: str | None = None,
+    collection: str | ee.ImageCollection | None = None,
     dataset: str | None = None,
     aoi=None,
     start: str | None = None,
@@ -56,7 +62,8 @@ def compose(
     Parameters
     ----------
     collection:
-        Raw Earth Engine collection ID. Mutually exclusive with *dataset*
+        Raw Earth Engine collection ID or an explicit ImageCollection snapshot.
+        Mutually exclusive with *dataset*
         in v0.1 — when *dataset* is provided, the collection is resolved
         automatically.
     dataset:
@@ -95,6 +102,14 @@ def compose(
     # --- Step 1: resolve dataset or collection --------------------------
     dataset_name, collection_id, ds_module = _resolve_dataset(dataset, collection)
 
+    validate_dates(start, end)
+    reducer = validate_reducer(reducer)
+    if dataset_name in ("sentinel1", "sentinel1_float"):
+        if filters is not None:
+            _sentinel1_filters.validate_filters(filters)
+    else:
+        reject_extra_filters(filters)
+
     # --- Step 2: normalize AOI ------------------------------------------
     if aoi is None:
         raise GeeComposerError("aoi is required.")
@@ -130,12 +145,25 @@ def compose(
     transform_name = getattr(transform, "__name__", None) if transform else None
     props = build_metadata_payload(
         dataset=dataset_name,
-        collection=collection_id,
+        collection=(
+            collection_id if isinstance(collection_id, str) else "explicit_snapshot"
+        ),
         start=start,
         end=end,
         reducer=reducer,
         transform_name=transform_name,
         metadata=metadata,
+        preprocess_name=getattr(preprocess, "__name__", None),
+        mask=mask,
+        filters=(
+            {
+                "instrumentMode": _sentinel1_filters.DEFAULT_INSTRUMENT_MODE,
+                **(filters or {}),
+            }
+            if dataset_name in ("sentinel1", "sentinel1_float")
+            else filters
+        ),
+        select=select,
     )
     image = image.set(props)
 
@@ -145,16 +173,14 @@ def compose(
 
 def _resolve_dataset(
     dataset: str | None,
-    collection: str | None,
-) -> tuple[str | None, str, Any]:
+    collection: str | ee.ImageCollection | None,
+) -> tuple[str | None, str | ee.ImageCollection, Any]:
     """Resolve the dataset preset or raw collection into a loader module.
 
     Returns ``(dataset_name, collection_id, module)``.
     """
     if dataset is not None and collection is not None:
-        raise GeeComposerError(
-            "Provide either 'dataset' or 'collection', not both."
-        )
+        raise GeeComposerError("Provide either 'dataset' or 'collection', not both.")
 
     if dataset is not None:
         name = validate_dataset(dataset)
@@ -170,9 +196,7 @@ def _resolve_dataset(
         # Use a thin generic loader.
         return None, collection, _GenericLoader(collection)
 
-    raise GeeComposerError(
-        "Either 'dataset' or 'collection' must be provided."
-    )
+    raise GeeComposerError("Either 'dataset' or 'collection' must be provided.")
 
 
 class _GenericLoader:
@@ -183,10 +207,10 @@ class _GenericLoader:
     collections uniformly.
     """
 
-    def __init__(self, collection_id: str) -> None:
+    def __init__(self, collection_id: str | ee.ImageCollection) -> None:
         self._collection_id = collection_id
 
-    def get_collection_id(self) -> str:
+    def get_collection_id(self) -> str | ee.ImageCollection:
         return self._collection_id
 
     def load_collection(
@@ -196,13 +220,17 @@ class _GenericLoader:
         end: str,
         filters: dict | None = None,
     ) -> ee.ImageCollection:
+        validate_dates(start, end)
+        reject_extra_filters(filters)
         return (
             ee.ImageCollection(self._collection_id)
             .filterBounds(aoi)
             .filterDate(start, end)
         )
 
-    def apply_mask(self, collection: ee.ImageCollection, mask: str) -> ee.ImageCollection:
+    def apply_mask(
+        self, collection: ee.ImageCollection, mask: str
+    ) -> ee.ImageCollection:
         raise GeeComposerError(
             f"Masking is not supported for raw collection '{self._collection_id}'. "
             "Use a dataset preset or apply masking manually before calling compose()."

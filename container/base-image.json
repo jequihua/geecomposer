@@ -1,0 +1,10 @@
+{
+  "source": "https://hub.docker.com/v2/repositories/library/python/tags/3.11.16-slim-trixie",
+  "tag": "3.11.16-slim-trixie",
+  "platform": "linux/amd64",
+  "index_digest": "sha256:da047cb8f9d1d98e5c070f5300ba9f7274e33b8fc0e5be5ed88740aed1b95ba9",
+  "manifest_digest": "sha256:174bec68e0451bffabbb08c7d5d21c6b253f772d81d52b9558af97bb3159b761",
+  "verified_manifest_sha256": true,
+  "observed_date": "2026-09-24",
+  "qualification": "metadata only; no layers downloaded or containers executed"
+}

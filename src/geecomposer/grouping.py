@@ -51,8 +51,8 @@ def compose_yearly(
 
     results: dict[int, ee.Image] = {}
     for year in year_list:
-        start = f"{year}-01-01"
-        end = f"{year + 1}-01-01"
+        start = f"{year:04d}-01-01"
+        end = f"{year + 1:04d}-01-01"
         results[year] = compose(start=start, end=end, **compose_kwargs)
 
     return results
@@ -83,9 +83,13 @@ def _validate_and_normalize_years(
         raise GeeComposerError("years must not be empty.")
 
     for i, y in enumerate(year_list):
-        if not isinstance(y, int):
+        if isinstance(y, bool) or not isinstance(y, int):
             raise GeeComposerError(
                 f"years[{i}] must be an integer, got {type(y).__name__}."
             )
 
+    if any(y < 1 or y > 9998 for y in year_list):
+        raise GeeComposerError("years must be between 1 and 9998")
+    if len(set(year_list)) != len(year_list):
+        raise GeeComposerError("years must not contain duplicates")
     return year_list
