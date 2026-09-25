@@ -17,7 +17,12 @@ RUN python -m pip wheel --no-deps --no-build-isolation --wheel-dir /wheels . \
 FROM python:3.11.16-slim-trixie@sha256:174bec68e0451bffabbb08c7d5d21c6b253f772d81d52b9558af97bb3159b761 AS runtime
 COPY --from=builder /opt/venv /opt/venv
 COPY LICENSE /usr/share/doc/geecomposer/LICENSE
-RUN python -m pip uninstall -y pip setuptools wheel \
+RUN --mount=type=bind,source=container/runtime_bootstrap.py,target=/tmp/runtime_bootstrap.py,readonly \
+    python -m pip uninstall -y pip setuptools wheel \
+    && python -I -B /tmp/runtime_bootstrap.py \
+    && for interpreter in /usr/local/bin/python /opt/venv/bin/python; do \
+         "$interpreter" -I -B -c "import importlib.util, pathlib, shutil, sysconfig; assert not (pathlib.Path(sysconfig.get_path('stdlib')) / 'ensurepip').exists(); assert not (pathlib.Path(sysconfig.get_path('stdlib')) / 'ensurepip').is_symlink(); assert all(importlib.util.find_spec(n) is None for n in ('ensurepip', 'pip', 'setuptools', 'wheel')); assert all(shutil.which(n) is None and all(not (pathlib.Path(d) / n).exists() and not (pathlib.Path(d) / n).is_symlink() for d in ('/usr/local/bin', '/opt/venv/bin')) for n in ('pip', 'pip3', 'pip3.11', 'easy_install', 'easy_install-3.11', 'wheel'))" || exit 1; \
+       done \
     && mkdir -p /work /home/worker \
     && chown 65532:65532 /work /home/worker \
     && chmod -R a-w /opt/venv \

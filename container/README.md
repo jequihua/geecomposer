@@ -235,3 +235,68 @@ none is an observed post-prune image success or authority for Docker now:
 
 These checks accompany fresh CLI, hosted policy, permissions, image equivalence
 and all-layer checks on new immutable IDs; previous image successes are history.
+
+
+## M003-S10: final-runtime bootstrap removal (offline preparation)
+
+Prompt 057 found `ensurepip`, `pip-24.0-py3-none-any.whl` and
+`setuptools-79.0.1-py3-none-any.whl` still present in the final local and both
+hosted filesystems. Their hashes matched pinned upstream Python layer 2.
+Uninstalling the installed pip/setuptools/wheel packages does not remove these
+stdlib bootstrap copies. D032 admits the canonical correction; it does not
+qualify changed images or authorize Docker in this coding pass.
+
+The shared runtime RUN now bind-mounts `container/runtime_bootstrap.py` from the
+explicitly admitted build-context path. After the existing pip uninstall it runs
+with pinned system Python, before USER 65532 and before local/hosted branching.
+The helper is not copied into an image layer. The builder, venv creation,
+hash locks, base digest and S09 pre-COPY dependency-test pruning are unchanged.
+
+This narrowly scoped helper is needed to preserve bundled notices before removing
+only `/usr/local/lib/python3.11/ensurepip`. Its entry point requires Linux Python
+3.11.16, system prefix `/usr/local` and that exact sysconfig stdlib path. It
+rejects link/reparse paths, unexpected directories/files, missing bootstrap
+modules/wheels, the changed entry-point hash, and any change to the two recorded
+wheel SHA-256 values. Only the three expected modules, two wheels and optional
+CPython-311 bytecode for those modules are eligible. No wildcard filesystem
+cleanup or host environment deletion is part of this pass.
+
+Before deletion, bounded ZIP reads validate every member name/type (including
+traversal, duplicate/case-colliding, normalized/truncated and linked entries).
+No ZIP extraction occurs. The helper preserves license/licence, copyright,
+copying, notice and authors texts, distribution METADATA and vendor attribution
+lists. Each wheel must contain a distribution notice. Executable/archive notice
+names fail; preserved bytes are stored as numbered non-executable `.txt` files
+under `/usr/share/doc/geecomposer/bootstrap-notices`, with wheel hash, original
+member path and per-file SHA-256 in `inventory.json`. Both wheel archives and all
+installer code/support are removed, not copied into the notice directory. The
+archive is read-only (files 0444, directory 0555) and created by the runtime root
+build step. CPython `LICENSE.txt` remains in place and its hash is checked before
+and after; project MIT, runtime libraries, EE support and S09 notices are untouched.
+All validation and verified notice/inventory writes precede any removal; a failed
+copy stops without removing the bootstrap tree. No automatic retry is provided.
+
+Notice selection preserves identified notice/attribution files, not an assertion
+that filenames discover every embedded or bundled license obligation. Actual
+pinned wheel member inventories and byte attribution must be reviewed during the
+new-image gate; this offline pass exercises tiny synthetic ZIPs, not real wheel
+removal. Complete native-library notice coverage remains independently pending.
+
+An independent Dockerfile assertion runs in both system Python and `/opt/venv`
+after removal, checking the exact tree, module discovery for ensurepip/pip/
+setuptools/wheel, and their named scripts on PATH and in both interpreter bin
+directories. It never invokes ensurepip or an installer. The development-only
+`runtime_bootstrap_check.py` is a bounded read-only follow-up checker for the
+same two interpreters plus notice inventory hashes, CPython notice preservation,
+archive membership, root ownership and non-writability. Later authorized use
+mounts this checker and the reviewed FRONT helper read-only; they are not runtime
+package dependencies. This is distinct from whole-filesystem/all-layer inspection.
+
+Removal produces normal runtime-layer whiteouts. Historical installer bytes in
+immutable upstream layers remain and must still be accounted for; no base
+flattening, rebuild or claim of erasure from history is made. Future FRONT-only
+qualification must check final installer absence first, then remaining content
+classification and complete native notices, and rerun the required regression,
+CLI and permission checks against new immutable IDs. Earlier 812-test and
+permission successes qualify only their earlier images. Review, commit and
+projection precede that separately authorized work.
