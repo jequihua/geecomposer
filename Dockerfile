@@ -3,6 +3,7 @@ FROM python:3.11.16-slim-trixie@sha256:174bec68e0451bffabbb08c7d5d21c6b253f772d8
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_DIR=1 PYTHONDONTWRITEBYTECODE=1
 WORKDIR /build
 COPY container/build-linux.lock container/runtime-linux.lock /locks/
+COPY container/runtime_content.py /build/runtime_content.py
 RUN python -m pip install --require-hashes --only-binary=:all: -r /locks/build-linux.lock
 COPY pyproject.toml README.md LICENSE ./
 COPY src/ ./src/
@@ -10,7 +11,8 @@ RUN python -m pip wheel --no-deps --no-build-isolation --wheel-dir /wheels . \
     && python -m venv --without-pip /opt/venv \
     && python -m pip --python /opt/venv install --require-hashes --only-binary=:all: -r /locks/runtime-linux.lock \
     && python -m pip --python /opt/venv install --no-deps /wheels/geecomposer-*.whl \
-    && python -m pip --python /opt/venv check
+    && python -m pip --python /opt/venv check \
+    && /opt/venv/bin/python /build/runtime_content.py
 
 FROM python:3.11.16-slim-trixie@sha256:174bec68e0451bffabbb08c7d5d21c6b253f772d81d52b9558af97bb3159b761 AS runtime
 COPY --from=builder /opt/venv /opt/venv

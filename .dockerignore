@@ -11,6 +11,7 @@
 !container/
 !container/build-linux.lock
 !container/runtime-linux.lock
+!container/runtime_content.py
 # Only code, metadata, license and reviewed locks enter the context.
 **/runtime_policy.json
 **/__pycache__/**
