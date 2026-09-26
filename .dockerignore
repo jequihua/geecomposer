@@ -17,6 +17,7 @@
 !container/third_party_notices/*.json
 !container/third_party_notices/*.md
 !container/third_party_notices/*.txt
+container/third_party_notices/.gitattributes
 # Only code, metadata, reviewed notices and locks enter the context.
 **/runtime_policy.json
 **/__pycache__/**

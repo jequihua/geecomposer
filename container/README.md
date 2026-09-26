@@ -340,3 +340,24 @@ When an authorized lock, base or bundled dependency update occurs:
 
 Offline asset verification is not fresh-image qualification. No changed image
 was built or inspected during this correction.
+
+### Source versus runtime notice membership — M003-S13
+
+The repository directory `third_party_notices/` holds 74 files: the 71 `.txt`
+assets, `manifest.json`, `coverage.md` and a repository-only `.gitattributes`.
+That attributes file (`*.txt -text`) keeps Git from rewriting raw notice bytes,
+including the one CRLF notice. It is source metadata, not a notice.
+
+The runtime directory `/usr/share/doc/geecomposer/third-party-notices/` must hold
+exactly 73 files: the 71 `.txt` assets plus `manifest.json` and `coverage.md`.
+Prompt-070 image `096f52ff…` shipped `.gitattributes` too. That file was admitted
+to the build context and copied by the former `third_party_notices/*` COPY source.
+Which `.dockerignore` rule admitted it was not isolated. The shared runtime COPY
+now names `*.txt`, `manifest.json` and `coverage.md` explicitly. `.dockerignore`
+also excludes `container/third_party_notices/.gitattributes` after the notice
+re-inclusions. Ownership 0:0, file mode 0444, directory mode 0555 and stage
+placement are unchanged. No notice bytes or repository attributes changed.
+
+This is an offline declarative correction. Only a new FRONT image built after
+review and projection can show the actual 73-file membership, raw bytes,
+ownership and modes. That check comes before the remaining qualification.
