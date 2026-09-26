@@ -17,6 +17,7 @@ RUN python -m pip wheel --no-deps --no-build-isolation --wheel-dir /wheels . \
 FROM python:3.11.16-slim-trixie@sha256:174bec68e0451bffabbb08c7d5d21c6b253f772d81d52b9558af97bb3159b761 AS runtime
 COPY --from=builder /opt/venv /opt/venv
 COPY LICENSE /usr/share/doc/geecomposer/LICENSE
+COPY --chown=0:0 --chmod=0444 container/third_party_notices/* /usr/share/doc/geecomposer/third-party-notices/
 RUN --mount=type=bind,source=container/runtime_bootstrap.py,target=/tmp/runtime_bootstrap.py,readonly \
     python -m pip uninstall -y pip setuptools wheel \
     && python -I -B /tmp/runtime_bootstrap.py \
@@ -25,6 +26,7 @@ RUN --mount=type=bind,source=container/runtime_bootstrap.py,target=/tmp/runtime_
        done \
     && mkdir -p /work /home/worker \
     && chown 65532:65532 /work /home/worker \
+    && chmod 0555 /usr/share/doc/geecomposer/third-party-notices \
     && chmod -R a-w /opt/venv \
     && chmod 0555 /opt/venv /opt/venv/lib /opt/venv/lib/python3.11 /opt/venv/lib/python3.11/site-packages
 ENV PATH=/opt/venv/bin:$PATH HOME=/home/worker PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1

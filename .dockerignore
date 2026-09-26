@@ -13,7 +13,11 @@
 !container/runtime-linux.lock
 !container/runtime_content.py
 !container/runtime_bootstrap.py
-# Only code, metadata, license and reviewed locks enter the context.
+!container/third_party_notices/
+!container/third_party_notices/*.json
+!container/third_party_notices/*.md
+!container/third_party_notices/*.txt
+# Only code, metadata, reviewed notices and locks enter the context.
 **/runtime_policy.json
 **/__pycache__/**
 **/*.pyc

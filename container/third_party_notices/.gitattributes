@@ -1,0 +1,2 @@
+# Hashes bind upstream bytes, including original line endings.
+*.txt -text

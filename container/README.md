@@ -62,7 +62,8 @@ The actual Linux image install must resolve/check the complete hash-locked set.
 
 The context is **the package root only**, never the development repository.
 The deny-by-default `.dockerignore` admits Python package source, package metadata,
-README/LICENSE and two locks. It excludes tests, notebooks, receipts, examples,
+README/LICENSE, two locks and reviewed static third-party notices. It excludes
+tests, notebooks, receipts, examples,
 credentials, dotenv files, virtual environments and runtime policy. A general
 wheel excludes JSON package data even if a runtime_policy.json was accidentally
 left beside cli.py. The hosted stage adds validated policy from a required
@@ -300,3 +301,42 @@ classification and complete native notices, and rerun the required regression,
 CLI and permission checks against new immutable IDs. Earlier 812-test and
 permission successes qualify only their earlier images. Review, commit and
 projection precede that separately authorized work.
+
+## M003-S12: static native notices (offline preparation)
+
+The [coverage matrix](third_party_notices/coverage.md) maps the recorded 37
+installed distributions and evidenced bundled components to existing or added
+notices. The [manifest](third_party_notices/manifest.json) binds versions,
+containing binary hashes, exact-release build sources, wheel/SBOM provenance,
+raw source hashes, shipped text hashes and notice destinations. Its limits and
+open gaps are part of the inventory; a mapped row is not a legal certification.
+
+The shared runtime copies the reviewed `.txt` assets, manifest and matrix to
+`/usr/share/doc/geecomposer/third-party-notices/` before local/hosted branching.
+The Dockerfile requests root ownership and mode 0444 for files and 0555 for the
+directory. No installer or network download is involved. Existing dependency,
+system and bootstrap notices remain at their recorded locations. The local
+`.gitattributes` preserves raw notice bytes across Git checkouts and is excluded
+from the image context. No package wheel contents change.
+
+When an authorized lock, base or bundled dependency update occurs:
+
+1. Bind the new installed inventory and binary hashes to immutable image and
+   wheel identities. Check exact-release build metadata and wheel SBOMs for
+   static dependencies as well as shared-library filenames.
+2. Reconcile every matrix row. Fetch only the matching primary notices, preserve
+   complete attribution/public-domain declarations, and record raw source and
+   shipped hashes. Document any extraction or encoding transformation. Reuse
+   existing text only with component-specific provenance; keep unknowns explicit.
+3. Update the static assets, manifest and matrix together. Run
+   `python -m pytest tests/test_native_notices.py -q -p no:cacheprovider` with the
+   existing project interpreter, then the public offline verifier. No network
+   is used by notice tests. Standalone source/tests copies skip asset-dependent
+   cases only when the entire repository-only notice directory is absent.
+4. Obtain review and separately authorized fresh-image qualification. Inspect
+   the actual file set, hashes, root ownership, non-executable/read-only modes,
+   UID 65532 access, containing layers, preserved native libraries and existing
+   notices in every affected target. Repeat the required runtime regressions.
+
+Offline asset verification is not fresh-image qualification. No changed image
+was built or inspected during this correction.
