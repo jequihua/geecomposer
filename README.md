@@ -12,9 +12,11 @@ It is intentionally narrow. v0.1 focuses on:
 - raw and normalized Rao Q on explicit pixel grids
 - Sentinel-2 NIRv peak-season Rao products
 - Drive and direct GCS export task creation
-- strict JSON recipes and a bounded CLI runner with private GCS recovery state
+- strict JSON recipes and a bounded CLI: personal Drive exports with local run
+  state by default, institutional GCS execution with administrator policy
 
-The main workflow is:
+The main Python workflow is below; the command-line workflow is in
+[Personal command-line quickstart](#personal-command-line-quickstart).
 
 1. initialize Earth Engine
 2. compose one image or a yearly set of images
@@ -158,19 +160,99 @@ credentials. The [recipe runner](docs/runner.md) verifies the attached platform
 identity and has no notebook fallback. Federation and impersonation remain
 unsupported until their complete source chains can be verified.
 
-### Offline recipe CLI
+### Personal command-line quickstart
 
-Installing the package provides `geecomposer`. These commands never initialize
-EE or discover credentials:
+Installing the package provides `geecomposer`. Without an administrator policy
+it runs in **personal mode**: your own Earth Engine login, exports to your
+Google Drive, and private run records on your machine. No service account,
+GCS bucket or policy file is needed. This path is implemented and tested
+offline with fakes; it has not yet been live- or container-qualified.
+
+1. Log in once on the host with the Earth Engine client (this is Earth Engine's
+   own flow; geecomposer never logs in or writes credentials):
+
+   ```text
+   earthengine authenticate
+   ```
+
+   (`python -c "import ee; ee.Authenticate()"` is equivalent.) It saves a refresh credential at `~/.config/earthengine/credentials`
+   (Windows: `%USERPROFILE%\.config\earthengine\credentials`).
+2. Check a recipe offline. `validate` and `--dry-run` never read credentials,
+   initialize EE or use the network:
+
+   ```text
+   geecomposer validate examples/recipes/personal_sentinel2_drive.json
+   ```
+
+3. Run it with an explicit Earth Engine project and a new run ID:
+
+   ```text
+   geecomposer --project my-ee-project run --recipe examples/recipes/personal_sentinel2_drive.json --run-id s2-demo-1
+   geecomposer --project my-ee-project status --run-id s2-demo-1
+   geecomposer --project my-ee-project resume --run-id s2-demo-1
+   geecomposer --project my-ee-project cancel --run-id s2-demo-1
+   ```
+
+   These commands are identical in PowerShell and POSIX shells. Options go
+   before the command. `--credentials FILE` selects another saved-login file;
+   `--state-dir DIR` selects the run-record directory (default
+   `~/.geecomposer/runs`, which must not contain or sit beside the credential
+   file). `status` reads only the local record.
+
+Personal recipes name a Drive folder: `"destination": {"drive_folder": "NAME"}`.
+It is a folder **name**, not an ID or path; Earth Engine writes into an
+existing folder with that name (the most recently modified one if several
+exist) or creates it. Files are named `RUNID-RANDOM_PRODUCT.tif` (large
+exports may be split into `-row-col` tiles), so runs never reuse names. Output
+reports the Earth Engine task IDs, states, folder and file-name prefixes.
+`succeeded` means Earth Engine completed the export tasks; the CLI does not list
+or download Drive files, so `raster_verification` stays `pending` until you
+inspect the GeoTIFFs. Three small example recipes are provided:
+[Sentinel-1](examples/recipes/personal_sentinel1_drive.json) (linear VV/VH,
+Gamma MAP), [Sentinel-2](examples/recipes/personal_sentinel2_drive.json)
+(cloud-masked NDVI) and [GN Rao](examples/recipes/personal_rao_gn_drive.json)
+(B4/B8/B11, 3-cell window). Change the folder name and run ID before use.
+
+Scripts, IPython and notebooks are unchanged by the CLI: the same saved login
+serves `initialize(project="my-ee-project")`, and `export_to_drive()` /
+`export_to_gcs()` still return unstarted tasks that you start yourself (see the
+Python examples below). Importing geecomposer never selects a CLI mode or
+authenticates.
+
+Local Docker uses the same commands with an image built from the Dockerfile's
+`local` target (tagged `geecomposer:local` below; see
+[container notes](container/README.md)). Mount only the credential file,
+read-only, and a separate writable state directory; never mount your home
+directory or bake credentials into an image. PowerShell:
 
 ```text
-geecomposer validate examples/recipes/sentinel2_ndvi.json
-geecomposer run --recipe examples/recipes/yearly_ratio.json --dry-run
+docker run --rm --read-only --tmpfs /tmp `
+  --mount "type=bind,src=$env:USERPROFILE\.config\earthengine\credentials,dst=/secrets/ee-credentials,readonly" `
+  --mount "type=bind,src=$PWD\geecomposer-state,dst=/state" `
+  --mount "type=bind,src=$PWD\examples\recipes,dst=/recipes,readonly" `
+  geecomposer:local --project my-ee-project --credentials /secrets/ee-credentials --state-dir /state `
+  run --recipe /recipes/personal_sentinel2_drive.json --run-id s2-demo-1
 ```
 
-Online `run`, `status`, `cancel` and explicit `resume` require administrator
-policy and an approved attached service account. See [runner usage and recovery](docs/runner.md),
-[portable recipes](examples/recipes/) and [observed offline verification](docs/qualification.md).
+POSIX (the `--user` mapping lets the container read your private credential
+file and write the state directory):
+
+```text
+docker run --rm --read-only --tmpfs /tmp --user "$(id -u):$(id -g)"   --mount "type=bind,src=$HOME/.config/earthengine/credentials,dst=/secrets/ee-credentials,readonly"   --mount "type=bind,src=$PWD/geecomposer-state,dst=/state"   --mount "type=bind,src=$PWD/examples/recipes,dst=/recipes,readonly"   geecomposer:local --project my-ee-project --credentials /secrets/ee-credentials --state-dir /state   run --recipe /recipes/personal_sentinel2_drive.json --run-id s2-demo-1
+```
+
+Create the state directory first and reuse it for `status`, `resume` and
+`cancel`. Earth Engine tasks keep running when the CLI or container exits;
+Ctrl-C requests cancellation, while a killed process leaves tasks to be
+reconciled with `resume` or `cancel` after about two minutes. The CLI never
+submits a replacement export when a submission outcome is unknown; it reports
+`uncertain` instead. See [runner usage and recovery](docs/runner.md).
+
+**Institutional alternative:** `--policy FILE` (operator-local) or a hosted
+image with a bundled policy selects institutional mode: a dedicated attached
+service account, allowlisted GCS buckets and private GCS run records. Personal
+options are rejected there and credentials never fall back between modes.
+See [runner usage](docs/runner.md) and the [operator procedure](docs/cloud_run_operator.md).
 
 ### 2. Compose A Sentinel-2 Image
 
@@ -662,8 +744,9 @@ per year.
 
 ## Current Project Status
 
-Release candidate preparation only: Linux containers and institutional live execution
-remain unqualified. The package has offline tests for:
+Release candidate preparation only: institutional live execution remains
+unqualified, and the personal CLI/Drive path is tested offline only (its live
+and container runs are pending). The package has offline tests for:
 
 - composition, Rao, seasonal NIRv, and export helpers are available
 - all three dataset presets exist (`sentinel1`, `sentinel1_float`,

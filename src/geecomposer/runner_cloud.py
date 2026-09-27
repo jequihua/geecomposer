@@ -189,15 +189,16 @@ class _Response(dict):
 class EETransport:
     """httplib-compatible transport; checks deadline even inside science getInfo loops."""
 
-    def __init__(self, budget):
+    def __init__(self, budget, hosts=("earthengine.googleapis.com",)):
         self.budget = budget
+        self.hosts = hosts
         self.timeout = 10
 
     def request(self, uri, method="GET", body=None, headers=None, **kwargs):
         self.budget.checkpoint()
         url = urlsplit(uri)
         require(
-            url.scheme == "https" and url.netloc == "earthengine.googleapis.com",
+            url.scheme == "https" and url.netloc in self.hosts,
             "unexpected EE endpoint",
             "auth",
         )
@@ -388,24 +389,30 @@ class GCS:
 
 
 class EarthEngine:
+    # Fixed origins for the EE transport; a personal subclass adds the token host.
+    hosts = ("earthengine.googleapis.com",)
+    # Refresh request passed to credentials outside EE's own transport (discovery).
+    auth_request = None
+
     def __init__(self, budget):
         self.budget = budget
 
-    def initialize(self, credentials, project):
-        require(
+    def _verified(self, credentials):
+        return bool(
             type(credentials) is AttachedCredentials
             and credentials.service_account_email == credentials.expected
-            and credentials.token,
-            "verified attached credentials required",
-            "auth",
+            and credentials.token
         )
+
+    def initialize(self, credentials, project):
+        require(self._verified(credentials), "verified attached credentials required", "auth")
         try:
             ee.Reset()
             ee.data.setMaxRetries(0)
             ee.Initialize(
                 credentials=credentials,
                 project=project,
-                http_transport=EETransport(self.budget),
+                http_transport=EETransport(self.budget, self.hosts),
             )
             self.credentials, self.project = credentials, project
         except Exception as exc:
@@ -461,7 +468,7 @@ class EarthEngine:
                     query["pageToken"] = token
                 url = f"https://earthengine.googleapis.com/v1/projects/{self.project}/operations?{urlencode(query)}"
                 headers = {}
-                self.credentials.before_request(None, "GET", url, headers)
+                self.credentials.before_request(self.auth_request, "GET", url, headers)
                 status, _, data = _read_url(url, self.budget, headers=headers, limit=MAX_STATE)
                 require(status not in (401, 403), "operation listing permission denied", "auth")
                 require(status == 200, "operation listing inaccessible or unavailable", "uncertain")

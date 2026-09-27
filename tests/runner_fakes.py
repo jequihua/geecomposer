@@ -138,6 +138,10 @@ class Engine:
         self.preparation_error = None
         self.cancel_calls = []
         self.fail_status = 0
+        # Every operation name actually passed to status/cancel, even refused ones.
+        self.polled = []
+        self.cancelled_operations = []
+        self.discovered = []
 
     def initialize(self, credentials, project):
         self.boundary.event("initialize.before")
@@ -190,6 +194,7 @@ class Engine:
         return {"name": self.operations[request_id]}
 
     def discover(self, marker):
+        self.discovered.append(marker)
         self.boundary.event("discover.before")
         operation = self.markers.get(marker)
         self.boundary.event("discover.after")
@@ -203,6 +208,7 @@ class Engine:
         )
 
     def status(self, request_id, operation=None):
+        self.polled.append(operation)
         self.boundary.event("status.before")
         if self.fail_status:
             self.fail_status -= 1
@@ -218,6 +224,7 @@ class Engine:
         return {"state": state, "error_message": "SECRET never log"}
 
     def cancel(self, request_id, operation=None):
+        self.cancelled_operations.append(operation)
         self.boundary.event("cancel.before")
         assert operation == self.operations[request_id]
         self.persisted(request_id, operation)

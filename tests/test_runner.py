@@ -466,3 +466,147 @@ def test_auth_during_cleanup_is_not_reclassified_as_uncertain():
     assert result["remote_pending"] is True
     assert w.engine.cancel_calls == []
     assert w.engine.submitted == ["request-1"]
+
+
+FOREIGN = "projects/test-project/operations/foreign"
+
+
+@pytest.mark.parametrize("command", ["resume", "cancel"])
+@pytest.mark.parametrize("evidence", ["foreign", "match"])
+def test_institutional_recovery_confirms_saved_operation_by_marker(command, evidence):
+    w = World()
+    w.engine.products = 1
+    w.engine.states["request-1"] = ["RUNNING", "COMPLETED"]
+
+    def crash(name):
+        if name == "status.before":
+            raise Crash()
+
+    w.boundary.hook = crash
+    with pytest.raises(Crash):
+        w.runner().run(w.recipe, "swap")
+    w.boundary.hook = None
+    state, generation = w.store.records["swap"]
+    assert state["tasks"][0]["operation"] == "projects/test-project/operations/server-1"
+    if evidence == "foreign":
+        # Another accessible export; recipe, marker and request bindings stay valid.
+        w.engine.operations["other-request"] = FOREIGN
+        state["tasks"][0]["operation"] = FOREIGN
+        w.store.records["swap"] = (state, generation)
+    w.clock.sleep(121)
+    w.boundary.trace.clear()
+    polled = len(w.engine.polled)
+    runner = w.runner()
+    if evidence == "foreign":
+        with pytest.raises(RunnerError) as exc:
+            getattr(runner, command)("swap")
+        assert exc.value.status == "conflict"
+        assert w.store.records["swap"] == (state, generation)
+        assert w.engine.polled[polled:] == []
+    else:
+        result = getattr(runner, command)("swap")
+        assert result["status"] == ("succeeded" if command == "resume" else "cancelled")
+        # One bounded discovery confirms the saved name; later polls reuse it.
+        assert w.boundary.trace.count("discover.before") == 1
+        assert set(w.engine.polled[polled:]) == {"projects/test-project/operations/server-1"}
+    assert FOREIGN not in w.engine.polled
+    assert FOREIGN not in w.engine.cancelled_operations
+    assert w.engine.submitted == ["request-1"] and w.engine.allocated == ["request-1"]
+
+
+@pytest.mark.parametrize("remote", ["cancelled", "still_active"])
+def test_generic_error_path_write_adopting_stop_runs_bounded_cleanup(remote):
+    """Institutional path: a controlled store failure escapes as a generic error;
+    the handler's release write adopts a concurrent stop request."""
+    w = World()
+    w.engine.products = 1
+    w.engine.states["request-1"] = ["RUNNING"]
+    if remote == "still_active":
+
+        def cancel(request_id, operation=None):
+            w.engine.cancelled_operations.append(operation)
+            raise TimeoutError("PRIVATE")
+
+        w.engine.cancel = cancel
+    armed = []
+
+    def hook(name):
+        if name == "status.after" and not armed:
+            armed.append("armed")
+        elif name == "write.before" and armed == ["armed"]:
+            armed.append("fired")
+            state, generation = w.store.records["generic"]
+            state = copy.deepcopy(state)
+            state.update(stop="cancelled", status="cancelling")
+            w.store.records["generic"] = (state, generation + 1)
+            raise RuntimeError("PRIVATE store failure")
+
+    w.boundary.hook = hook
+    result = w.runner().run(w.recipe, "generic")
+    assert armed == ["armed", "fired"]
+    assert result["status"] == ("cancelled" if remote == "cancelled" else "uncertain")
+    assert result["remote_pending"] is (remote == "still_active")
+    assert w.engine.cancelled_operations == ["projects/test-project/operations/server-1"]
+    assert w.engine.submitted == ["request-1"]
+    state, _ = w.store.records["generic"]
+    assert state["owner"] is None and state["stop"] == "cancelled"
+    assert state["status"] == result["status"]
+
+
+FOREIGN_MARKER = "gc-" + "f" * 64
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["marker_and_operation", "self_consistent", "fingerprint", "removed", "duplicate", "stop_only"],
+)
+def test_institutional_stop_adoption_keeps_trusted_submission_identity(change):
+    from geecomposer.runner_science import discovery_marker
+
+    w = World()
+    w.engine.products = 2
+    w.engine.states.update({"request-1": ["RUNNING"], "request-2": ["RUNNING"]})
+    w.engine.operations["other-request"] = FOREIGN
+    w.engine.markers[FOREIGN_MARKER] = FOREIGN
+    suspect = []
+
+    def hook(name):
+        if name == "status.after" and not suspect:
+            state, generation = copy.deepcopy(w.store.records["inst"])
+            state.update(stop="cancelled", status="cancelling")
+            first = state["tasks"][0]
+            if change == "marker_and_operation":
+                first.update(marker=FOREIGN_MARKER, operation=FOREIGN)
+            elif change == "self_consistent":
+                first.update(
+                    request_id="other-request",
+                    name="product_x",
+                    marker=discovery_marker("other-request", state["binding"], "product_x"),
+                    operation=FOREIGN,
+                )
+            elif change == "fingerprint":
+                first["fingerprint"] = "0" * 64
+            elif change == "removed":
+                state["tasks"].pop()
+            elif change == "duplicate":
+                state["tasks"].append(copy.deepcopy(first))
+            w.store.records["inst"] = (state, generation + 1)
+            suspect.append(copy.deepcopy(w.store.records["inst"]))
+
+    w.boundary.hook = hook
+    if change == "stop_only":
+        result = w.runner().run(w.recipe, "inst")
+        assert (result["status"], result["remote_pending"]) == ("cancelled", False)
+        assert sorted(w.engine.cancelled_operations) == [
+            "projects/test-project/operations/server-1",
+            "projects/test-project/operations/server-2",
+        ]
+    else:
+        with pytest.raises(RunnerError, match="identity") as exc:
+            w.runner().run(w.recipe, "inst")
+        assert exc.value.status == "conflict"
+        assert w.store.records["inst"] == suspect[0]
+        assert w.engine.cancelled_operations == []
+    assert suspect and FOREIGN_MARKER not in w.engine.discovered
+    assert FOREIGN not in w.engine.polled + w.engine.cancelled_operations
+    assert w.engine.submitted == ["request-1", "request-2"]

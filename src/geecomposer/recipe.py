@@ -2,6 +2,8 @@
 
 The recipe surface intentionally contains named operations, never Python,
 expressions, asset URLs, vector paths or credential/project settings.
+Destinations are GCS {bucket, prefix} or, outside institutional policy, a
+personal Drive {drive_folder} name.
 """
 
 from __future__ import annotations
@@ -151,6 +153,23 @@ def location(value):
         "invalid relative prefix",
     )
     return value
+
+
+def drive_folder(value):
+    """Personal Drive destination: a folder *name* (EE resolves names, not IDs)."""
+    fields(value, ("drive_folder",))
+    require(
+        type(value["drive_folder"]) is str
+        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}", value["drive_folder"]),
+        "invalid Drive folder name",
+    )
+    return value
+
+
+def destination(value):
+    """Either GCS {bucket, prefix} or Drive {drive_folder}; never reinterpreted."""
+    require(type(value) is dict, "expected a JSON object")
+    return (drive_folder if "drive_folder" in value else location)(value)
 
 
 def allowed(value, locations):
@@ -337,7 +356,8 @@ def validate_recipe(value, policy=None):
     )
     bounds = validate_aoi(value["aoi"], budget["vertices"])
     validate_grid(value["grid"])
-    location(value["destination"])
+    # Institutional policy admits only allowlisted GCS locations.
+    (location if policy else destination)(value["destination"])
     if policy:
         require(
             allowed(value["destination"], policy["outputs"]),

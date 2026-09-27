@@ -27,8 +27,15 @@ external scratch, clears credential variables, disables pytest plugin autoload,
 blocks sockets/DNS and credential discovery, checks source origins, runs isolated
 Ruff E4/E7/E9/F checks, builds and installs a wheel without indexes/dependency
 installation, then checks wheel imports and the installed CLI's help/validate/
-dry-run paths for all six recipes. This is a regression guard, not an OS sandbox.
-It fails on unexpected test skips or missing public Job/example assets.
+dry-run paths for all nine recipes. This is a regression guard, not an OS sandbox.
+It fails on test failures, missing public Job/example assets and every test or
+collection skip, with one exception decided from pytest reports: on Windows,
+which has no POSIX FIFOs, `tests/test_personal_cli.py::test_posix_fifo_records_never_block`
+must be collected and skipped by its own mark with reason `POSIX FIFOs are
+unsupported on this platform`. The gate then prints that permitted skip and
+continues through lint, wheel and CLI checks. That run is not FIFO evidence; the
+real regression still needs a POSIX/Linux run. Elsewhere the gate allows zero
+skips, and that test must execute and pass.
 
 Two development-only modules are intentionally omitted: test_live_diagnostics.py
 (the private experiment diagnostic harness) and test_verification_gate.py

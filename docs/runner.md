@@ -1,10 +1,29 @@
 # Version 1 recipe runner
 
 The installed `geecomposer` command uses the same package science functions for
-local and hosted execution. The library/notebook APIs retain their defaults,
-custom callables, interactive initialization and unstarted Drive/GCS tasks.
-The runner is a separate, strict institutional boundary. No cloud execution was
-performed during its offline implementation; see [validation evidence](qualification.md).
+personal, institutional-local and hosted execution. The library/notebook APIs
+retain their defaults, custom callables, interactive initialization and
+unstarted Drive/GCS tasks; importing the package selects no CLI mode and never
+authenticates. No cloud execution was performed during the offline
+implementation; see [validation evidence](qualification.md).
+
+## Execution modes
+
+The mode is chosen from arguments and the image before any credential file,
+metadata server or network is touched, and never changes after an error:
+
+| Mode | Selected by | Identity | Destination | Run records |
+| --- | --- | --- | --- | --- |
+| Personal (default) | no `--policy`, no `--hosted`, no bundled policy | explicit user EE saved-login file | Drive folder name | private local state directory |
+| Institutional local | `--policy FILE` | approved attached service account | allowlisted GCS | private GCS control prefix |
+| Hosted | bundled policy (always) or `--hosted` | approved attached service account | allowlisted GCS | private GCS control prefix |
+
+Personal options (`--project`, `--credentials`, `--state-dir`) are rejected in
+institutional and hosted modes before any policy, recipe or credential read.
+Institutional policy admits only allowlisted GCS destinations, so a Drive
+recipe fails validation there. Personal online commands require a Drive
+destination; the personal CLI does not export to GCS (Python `export_to_gcs()`
+remains available). There is no fallback between modes.
 
 ## Offline commands
 
@@ -15,6 +34,7 @@ geecomposer --help
 geecomposer validate examples/recipes/sentinel2_ndvi.json
 geecomposer run --recipe examples/recipes/yearly_ratio.json --dry-run
 geecomposer --policy examples/recipes/policy.local.example.json validate examples/recipes/rao_gn.json
+geecomposer validate examples/recipes/personal_rao_gn_drive.json
 ```
 
 Validation reads at most 1 MiB from a regular UTF-8 JSON file. Neither validation
@@ -41,7 +61,8 @@ The runner never clips selected scenes or changes this setting automatically.
 
 ## Recipe shape
 
-See the six small [example JSON files](../examples/recipes/). Examples contain
+See the nine small [example JSON files](../examples/recipes/): six GCS
+recipes and three `personal_*_drive.json` recipes. Examples contain
 illustrative resources, not production defaults. Every object rejects unknown
 fields. All JSON keys must be unique; booleans are not numbers. NaN, infinities,
 overflowing numbers, malformed dates, duplicate bands/years, invalid polygon
@@ -54,7 +75,7 @@ topology, open rings, arbitrary URLs/paths, expressions, code and asset IDs fail
 | `dataset` | `sentinel2`, `sentinel1` (dB), `sentinel1_float` (linear). |
 | `aoi` | Inline 2D GeoJSON Polygon/MultiPolygon, WGS84 lon/lat. No Feature wrappers, vector-driver paths or references. Latitudes within -85..85; antimeridian-crossing rings are rejected. Holes must be valid. Edges use `geodesic=False`. |
 | `grid` | `{crs, transform}`; six finite invertible affine coefficients. CRS is EPSG:4326, EPSG:3857, or EPSG:32601..32660/32701..32760. Other CRS definitions are rejected rather than interpreted. |
-| `destination` | `{bucket, prefix}`. Bare lowercase bucket from the administrator allowlist, relative slash-separated prefix. Version 1 admits simple hyphenated bucket names; no dotted buckets. |
+| `destination` | Exactly one shape. GCS: `{bucket, prefix}`, bare lowercase bucket from the administrator allowlist, relative slash-separated prefix; version 1 admits simple hyphenated bucket names, no dotted buckets. Drive (personal mode only): `{drive_folder}`, a folder name of 1-100 letters, digits, `_`, `-` or `.` starting with a letter or digit; no separators, IDs or URLs are interpreted. Mixed or unknown keys fail. |
 | `bands` | 1..12 distinct actual Sentinel bands, not regex selectors. S2: B1..B9 including B8A, B11/B12; S1: VV/VH/HH/HV/angle. |
 | `start`, `end` | Real `YYYY-MM-DD` dates, half-open interval. Required except for yearly. |
 | `years` | Yearly only; 1..10 distinct integers 1..9998, replacing dates. |
@@ -98,11 +119,12 @@ include a slash boundary, never a mere textual prefix. No permissive policy is
 installed by default.
 
 The local operator supplies `--policy policy.json` before the command. The
-example policy is illustrative and uses `mode: local`. Local online execution
-currently requires running on a platform with the approved attached identity.
+example policy is illustrative and uses `mode: local`. Institutional local online
+execution requires running on a platform with the approved attached identity.
 Federation/impersonation, downloaded keys and personal refresh credentials are
-not supported. Off-cloud users can validate/dry-run; unsupported online identity
-fails clearly rather than falling back to a personal account.
+not accepted in institutional modes; unsupported online identity fails clearly
+rather than falling back to a personal account. Personal use is the separate
+default mode described below.
 
 The hosted build must place a reviewed `runtime_policy.json` beside `geecomposer/cli.py` in a
 read-only image layer, set its `mode` to `hosted`, and record the reviewed image
@@ -147,6 +169,97 @@ package version and image setting participate in the run binding. Local paths
 are not recorded; local source identity is a content hash. Hosted AOIs are inline
 bounded JSON, not arbitrary vector files. External upload/invocation tooling and
 deployment require explicit authorization; no upload/publish helper runs implicitly.
+
+## Personal mode
+
+```text
+geecomposer --project PROJECT [--credentials FILE] [--state-dir DIR] run --recipe RECIPE.json --run-id RUN_ID
+geecomposer --project PROJECT [--state-dir DIR] status --run-id RUN_ID
+geecomposer --project PROJECT [--credentials FILE] [--state-dir DIR] resume --run-id RUN_ID
+geecomposer --project PROJECT [--credentials FILE] [--state-dir DIR] cancel --run-id RUN_ID
+```
+
+**Project.** `--project` is required for every online personal command and is
+bound into the run; a different project makes status/resume/cancel fail as a
+conflict. Offline `validate` and `--dry-run` accept but never use personal
+options.
+
+**Credentials.** Log in on the host with Earth Engine's own flow
+(`earthengine authenticate` or `ee.Authenticate()`); geecomposer adds no OAuth
+flow, profile manager or token store. `--credentials` names that saved-login
+file; without it the installed EE client's documented location
+(`~/.config/earthengine/credentials`) is used. In Docker, mount exactly that
+file read-only and always pass `--credentials`; never mount a home directory or
+bake a credential into an image. The file is read once (at most 64 KiB, strict
+JSON) and may contain only keys the EE saved-login flow writes
+(`refresh_token`, `scopes`, `client_id`, `client_secret`, `redirect_uri`,
+`project`). Service-account keys, gcloud ADC files, external-account files and
+anything else fail with exit 3. The refresh token becomes an explicit
+`google.oauth2` user credential with EE's fixed token endpoint and the saved
+(or EE default) client and scopes; the file's `project` is ignored in favor of
+`--project`. There is no ADC, metadata-server or key-file fallback, no
+interactive login during `run`, and no credential write. Each invocation resets
+EE and initializes it with that object and project, so no identity is inherited
+from a previous run. Earth Engine calls and token refreshes go through the
+runner's bounded, proxy- and redirect-free transport, limited to
+`earthengine.googleapis.com` and the fixed `oauth2.googleapis.com` token host.
+Tokens and raw errors are never printed or stored. `status` reads only the
+local record and does not open credentials.
+
+**State directory.** `--state-dir` (default `~/.geecomposer/runs`, created with
+owner-only permissions where the OS supports them) holds `RUN_ID.json` records
+and `RUN_ID.lock` files. It must not contain the credential file or lie inside
+the credential file's directory. Each record is at most 1 MiB and holds the
+canonical recipe, source hash, binding, project, reserved file-name base,
+provenance (scene IDs, GN calibration), task request IDs, markers,
+configuration fingerprints and operation names, never credential material.
+Every read and write takes a non-blocking OS file lock (released by the OS if
+the process dies; bounded wait of about five seconds, then `conflict`),
+re-checks the record generation and replaces the record atomically from a
+temporary file in the same directory. Reservation requires that no record
+exists. A file that is not a valid geecomposer record for that run ID is
+reported `uncertain` and never overwritten. A failed write reports `uncertain`
+and leaves the prior record. Protect the directory as private data and keep it
+while a run may need recovery. Locking on network or container-shared
+filesystems has not been qualified.
+
+**Execution and recovery.** Personal runs use the same state machine, ceilings
+and deadlines as institutional runs (sections below), without bucket preflight
+or GCS inventory: reserve, snapshot sources, persist the plan, persist each
+request ID, marker, fingerprint and a `submitting` intent **before**
+`exportImage`, then persist the operation name. After a crash, wait for the
+120-second lease and `resume`; an intent whose operation cannot be found by its
+exact marker is reported `uncertain` and is never resubmitted. `cancel` on a
+live run records a stop request (`cancelling`); on an expired run it cancels
+discovered EE operations. Ctrl-C/SIGTERM request the same cancellation. Earth
+Engine tasks outlive the CLI or container: exiting does not stop them, and
+`remote_pending: true` means work may still be running. Reaching the
+1,800-second application deadline finalizes the run as `deadline` and requests
+cancellation of unfinished exports, as in institutional mode. Resume fails
+closed if the project, recipe, run binding, prepared configuration or
+scientific provenance changed.
+
+**Drive outputs.** Each product becomes one native unstarted Drive task built by
+`export_to_drive()` with the recipe's exact CRS/affine grid, every band
+converted to double (so Rao value/count/coverage share one type), `-9999`
+GeoTIFF nodata metadata and no unmasking. Files are named
+`RUN_ID-RANDOM_PRODUCT` in the named folder; Earth Engine may add `-row-col`
+tile suffixes. The folder is a name: Earth Engine uses an existing folder of
+that name anywhere in your Drive (the most recently modified if several exist)
+or creates one; separators are literal. Choose a distinctive name. Output JSON
+reports `mode`, `project`, `destination`, each task's `name`, `state`,
+`request_id`, `task_id` (from the operation name, when known) and
+`file_name_prefix`, plus `remote_pending` and `raster_verification: "pending"`.
+It contains no invented Drive file IDs or URLs. `succeeded` means every Earth
+Engine export task reported COMPLETED; no Drive listing, download, checksum or
+pixel check is performed and no scope is requested beyond the saved login's.
+Inspect the GeoTIFFs (grid, dtype, nodata, masks, values) before relying on
+them.
+
+**Qualification.** Personal mode is verified offline with fake credential,
+transport and task boundaries, temporary state directories and native EE graph
+construction. Live Earth Engine/Drive use and the Docker mount pattern have not
+been executed.
 
 ## Runtime Earth Engine permissions
 
@@ -327,9 +440,9 @@ links. It never includes full recipes/AOIs, tokens or raw external exception tex
 
 | Status | Exit | Meaning |
 | --- | --- | --- |
-| validated, dry_run, succeeded | 0 | Offline validation/estimate, or verified terminal success, respectively. |
+| validated, dry_run, succeeded | 0 | Offline validation/estimate, or terminal success: verified GCS inventory (institutional) or completed EE Drive tasks with `raster_verification: pending` (personal). |
 | validation | 2 | Input/schema/resource/argument failure. |
-| auth | 3 | Identity, allowlist, permission or required-bucket access failure. |
+| auth | 3 | Identity, credential file, allowlist, permission or required-bucket access failure. |
 | no_data | 4 | Empty scene collection or unusable calibration/season. |
 | conflict | 5 | Reserved ID, active ownership, changed binding/configuration or failed CAS. |
 | uncertain | 6 | Unknown submission/state outcome, unreconciled cancellation or unavailable response. |

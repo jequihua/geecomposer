@@ -27,6 +27,91 @@ ee.data.get_persistent_credentials = deny
 """
 
 
+# The only permitted skip: this named test, skipped by its own skipif mark on
+# Windows, which has no POSIX FIFOs. Everywhere else the suite has zero skips and
+# this test must actually pass.
+FIFO_TEST = "tests/test_personal_cli.py::test_posix_fifo_records_never_block"
+FIFO_REASON = "POSIX FIFOs are unsupported on this platform"
+
+
+def fifo_unsupported():
+    return os.name == "nt" and not hasattr(os, "mkfifo")
+
+
+class SkipPolicy:
+    """pytest plugin: decide skips from test reports, never from printed output."""
+
+    def __init__(self, windows):
+        self.windows = windows
+        self.problems = []
+        self.collected = False
+        self.skipped = False
+        self.passed = False
+
+    def pytest_itemcollected(self, item):
+        self.collected |= item.nodeid == FIFO_TEST
+
+    def pytest_collectreport(self, report):
+        if not report.passed:
+            self.problems.append(f"collection {report.outcome}: {report.nodeid}")
+
+    def pytest_runtest_logreport(self, report):
+        if report.nodeid == FIFO_TEST and report.when == "call" and report.passed:
+            self.passed = True
+        if not report.skipped:
+            return
+        longrepr = report.longrepr
+        reason = longrepr[2] if isinstance(longrepr, tuple) and len(longrepr) == 3 else None
+        if (
+            self.windows
+            and not self.skipped
+            and report.nodeid == FIFO_TEST
+            and report.when == "setup"
+            and not hasattr(report, "wasxfail")
+            and reason == "Skipped: " + FIFO_REASON
+        ):
+            self.skipped = True
+        else:
+            self.problems.append(f"unexpected skip: {report.nodeid} ({report.when})")
+
+    def verdict(self):
+        problems = list(self.problems)
+        if not self.collected:
+            problems.append(f"required test not collected: {FIFO_TEST}")
+        elif self.windows and not self.skipped:
+            problems.append(f"expected Windows platform skip not observed: {FIFO_TEST}")
+        elif not self.windows and not self.passed:
+            problems.append(f"required test did not pass: {FIFO_TEST}")
+        return problems
+
+    def summary(self):
+        if self.windows:
+            return (
+                f"Permitted platform skip: {FIFO_TEST} ({FIFO_REASON}); "
+                "the real FIFO regression is pending POSIX/Linux execution."
+            )
+        return f"No skipped tests; {FIFO_TEST} executed and passed."
+
+
+def run_tests(root, basetemp, *, windows=None):
+    """Run the public suite under SkipPolicy; failures and violations are fatal."""
+    import pytest
+
+    policy = SkipPolicy(fifo_unsupported() if windows is None else windows)
+    result = pytest.main(
+        ["tests", "-q", "-p", "no:cacheprovider", "--rootdir", str(root)]
+        + [f"--ignore=tests/{name}" for name in DEV_TESTS]
+        + ["--basetemp", str(basetemp)],
+        plugins=[policy],
+    )
+    problems = policy.verdict()
+    for problem in problems:
+        print("skip policy violation:", problem)
+    if not problems:
+        print(policy.summary())
+    return int(result) or int(bool(problems))
+
+
 def run(argv, *, cwd, env):
     result = subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True)
     if result.returncode:
@@ -79,20 +164,13 @@ root, scratch = map(Path, sys.argv[1:])
 sys.path.insert(0, str(root / "src"))
 import geecomposer
 assert Path(geecomposer.__file__).resolve().is_relative_to(root / "src")
-class NoSkips:
-    skipped = False
-    def pytest_runtest_logreport(self, report):
-        self.skipped |= report.skipped
-    def pytest_collectreport(self, report):
-        self.skipped |= report.skipped
-plugin = NoSkips()
-result = pytest.main(["tests", "-q", "-p", "no:cacheprovider",
-    "--ignore=tests/test_live_diagnostics.py", "--ignore=tests/test_verification_gate.py",
-    "--basetemp", str(scratch / "pytest")], plugins=[plugin])
+sys.path.insert(0, str(root / "tools"))
+import verify_offline
+result = verify_offline.run_tests(root, scratch / "pytest")
 for name, module in tuple(sys.modules.items()):
     if name == "geecomposer" or name.startswith("geecomposer."):
         assert Path(module.__file__).resolve().is_relative_to(root / "src")
-raise SystemExit(result or int(plugin.skipped))
+raise SystemExit(result)
 """
     )
     print(
@@ -171,7 +249,8 @@ entry = installed / "bin" / ("geecomposer.exe" if sys.platform == "win32" else "
 assert entry.is_file()
 recipes = sorted((root / "examples/recipes").glob("*.json"))
 recipes = [p for p in recipes if p.name != "policy.local.example.json"]
-assert len(recipes) == 6
+assert len(recipes) == 9
+assert sum(p.name.startswith("personal_") for p in recipes) == 3
 for args in [["--help"]] + [args for p in recipes for args in
         (["validate", str(p)], ["run", "--recipe", str(p), "--dry-run"])]:
     sys.argv = [str(entry), *args]
@@ -181,14 +260,18 @@ for args in [["--help"]] + [args for p in recipes for args in
             runpy.run_path(str(entry), run_name="__main__")
         except SystemExit as exc:
             assert exc.code in (None, 0)
-    if args != ["--help"]:
+    if args == ["--help"]:
+        assert all(o in output.getvalue() for o in ("--project", "--credentials", "--state-dir"))
+    else:
         value = json.loads(output.getvalue())
         assert value["status"] == ("validated" if args[0] == "validate" else "dry_run")
+        if any(Path(a).name.startswith("personal_") for a in args):
+            assert set(value["destination"]) == {"drive_folder"}
 for name, module in tuple(sys.modules.items()):
     if name == "geecomposer" or name.startswith("geecomposer."):
         assert Path(module.__file__).resolve().is_relative_to(installed)
 assert not ee.data.is_initialized()
-print("Installed wheel origins and CLI: help + 12 recipe checks passed")
+print("Installed wheel origins and CLI: help + 18 recipe checks passed")
 """
     )
     print(

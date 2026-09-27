@@ -10,6 +10,7 @@ from .compose import compose
 from .grouping import compose_yearly
 from .datasets import sentinel1, sentinel1_float, sentinel2
 from .datasets.sentinel1_preprocessing import gamma_map
+from .export.drive import export_to_drive
 from .export.gcs import export_to_gcs
 from .rao import RaoGrid, fit_normalization, rao_q
 from .seasonal import NoRaoDataError, nirv_seasonal_rao
@@ -73,6 +74,7 @@ def prepare(recipe, prefix, budget, previous=None):
 
     The runner persists sources and fingerprints before submitting anything.
     Resume uses exactly these sources and rejects a changed configuration.
+    prefix is the reserved GCS object prefix, or the Drive file-name base.
     """
     budget.timeout()
     grid = RaoGrid(**recipe["grid"])
@@ -243,20 +245,37 @@ def prepare(recipe, prefix, budget, previous=None):
         "artifact",
     )
     result = []
+    destination = recipe["destination"]
     for name, product in products:
         budget.timeout()
-        task = export_to_gcs(
-            product.toDouble(),
-            name,
-            recipe["destination"]["bucket"],
-            region,
-            file_name_prefix=f"{prefix}/{name}/image",
-            max_pixels=cap,
-            crs=grid.crs,
-            crs_transform=grid.transform,
-            no_data=-9999,
-            cloud_optimized=True,
-        )
+        # One explicit double type for every band (Rao value/count/coverage).
+        image = product.toDouble()
+        if "drive_folder" in destination:
+            # Drive has no object prefix: prefix is a unique run file-name base.
+            task = export_to_drive(
+                image,
+                name,
+                destination["drive_folder"],
+                region,
+                file_name_prefix=f"{prefix}_{name}",
+                max_pixels=cap,
+                crs=grid.crs,
+                crs_transform=grid.transform,
+                no_data=-9999,
+            )
+        else:
+            task = export_to_gcs(
+                image,
+                name,
+                destination["bucket"],
+                region,
+                file_name_prefix=f"{prefix}/{name}/image",
+                max_pixels=cap,
+                crs=grid.crs,
+                crs_transform=grid.transform,
+                no_data=-9999,
+                cloud_optimized=True,
+            )
         # Match native Task.start's explicit default and bind it in the fingerprint.
         task.config["workloadTag"] = ""
         result.append(

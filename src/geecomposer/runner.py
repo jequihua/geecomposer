@@ -20,6 +20,28 @@ TERMINAL_EE = {"COMPLETED", "FAILED", "CANCELLED"}
 ACTIVE_EE = {"READY", "RUNNING", "CANCEL_REQUESTED"}
 
 
+# Record fields a concurrent stop request or normal progress may change. Every
+# other field, and each task's submission identity, is fixed once written.
+PROGRESS_FIELDS = frozenset(
+    {"status", "stop", "owner", "lease_until", "updated", "remote_pending", "inventory",
+     "inventory_unavailable", "tasks"}
+)
+TASK_IDENTITY = ("request_id", "name", "marker", "fingerprint")
+
+
+def identity(state):
+    """Digest of immutable run bindings plus ordered task submission identities."""
+    try:
+        return digest(
+            [
+                {k: v for k, v in state.items() if k not in PROGRESS_FIELDS},
+                [[task[k] for k in TASK_IDENTITY] for task in state["tasks"]],
+            ]
+        )
+    except (TypeError, KeyError, AttributeError, RunnerError):
+        return None
+
+
 def run_id(value):
     require(
         type(value) is str and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", value),
@@ -123,6 +145,53 @@ class Runner:
         self.owned = False
         self.cancel_requested = False
         self.initialized = False
+        # identity() of this worker's last successful write; a newer record
+        # carrying a stop request must match it before the stop is honored.
+        self.written = None
+        # request_id -> operation name established by remote evidence in this
+        # process (exportImage response or exact-marker discovery). A name read
+        # from persisted state is only a claim until it appears here.
+        self.verified = {}
+
+    # Destination-specific steps. These GCS defaults are the institutional
+    # contract; runner_personal overrides them for Drive without GCS inventory.
+
+    def _validate(self, recipe):
+        return validate_recipe(recipe, self.policy)
+
+    def _reservation(self, recipe, identifier):
+        buckets = {recipe["destination"]["bucket"], self.policy["control"]["bucket"]}
+        preflight = [self.store.bucket_preflight(x) for x in sorted(buckets)]
+        return dict(
+            image_version=self.policy["image_version"],
+            principal=self.policy["service_account"],
+            prefix=f"{recipe['destination']['prefix']}/{identifier}-{uuid.uuid4().hex}",
+            inventory=[],
+            bucket_preflight=preflight,
+        )
+
+    def _valid_prefix(self, state, recipe, identifier):
+        return state["prefix"].startswith(
+            recipe["destination"]["prefix"] + "/" + identifier + "-"
+        ) and re.fullmatch(r"[A-Za-z0-9_/-]+", state["prefix"])
+
+    def _verify_outputs(self):
+        self.state["inventory"] = self.store.inventory(
+            self.state["recipe"]["destination"]["bucket"],
+            self.state["prefix"],
+        )
+        verify_inventory(self.state, self.state["inventory"])
+
+    def _stop_outputs(self):
+        try:
+            self.state["inventory"] = self.store.inventory(
+                self.state["recipe"]["destination"]["bucket"], self.state["prefix"]
+            )
+        except Exception:
+            self.state["inventory_unavailable"] = True
+
+    def _public(self, state):
+        return public_status(state, self.policy)
 
     def _initialize(self):
         if not self.initialized:
@@ -139,18 +208,13 @@ class Runner:
             "run policy binding mismatch",
             "conflict",
         )
-        recipe = validate_recipe(state["recipe"], self.policy)
+        recipe = self._validate(state["recipe"])
         require(
             state["binding"] == binding(recipe, self.policy, state["source"]),
             "run content binding mismatch",
             "conflict",
         )
-        require(
-            state["prefix"].startswith(recipe["destination"]["prefix"] + "/" + identifier + "-")
-            and re.fullmatch(r"[A-Za-z0-9_/-]+", state["prefix"]),
-            "invalid reserved prefix",
-            "conflict",
-        )
+        require(self._valid_prefix(state, recipe, identifier), "invalid reserved prefix", "conflict")
         require(
             type(state["tasks"]) is list and len(state["tasks"]) <= recipe["limits"]["outputs"],
             "invalid task manifest",
@@ -197,9 +261,11 @@ class Runner:
             self.state["lease_until"] = 0
         try:
             self.generation = self.store.write(self.state["run_id"], self.state, self.generation)
+            self.written = identity(self.state)
         except RunnerError as exc:
-            # A cancel requester only sets stop/status. Adopting that newer CAS
-            # generation authorizes cleanup, never another export.
+            # A cancel requester only sets stop/status on a copy of our last
+            # write. Honor that request by merging it into this worker's trusted
+            # state, never by adopting the newer record's tasks or bindings.
             if exc.status == "conflict":
                 latest, generation = self.store.read(self.state["run_id"])
                 if (
@@ -207,7 +273,20 @@ class Runner:
                     and latest.get("owner") == self.owner
                     and latest.get("stop") == "cancelled"
                 ):
-                    self.state, self.generation = latest, generation
+                    if self.written is None or identity(latest) != self.written:
+                        self.owned = False
+                        raise RunnerError(
+                            "conflict",
+                            "concurrent record changed run or submission identity; not adopted",
+                        ) from None
+                    lease = latest.get("lease_until")
+                    self.state.update(
+                        stop="cancelled",
+                        status="cancelling",
+                        owner=self.owner,
+                        lease_until=lease if type(lease) in (int, float) else 0,
+                    )
+                    self.generation = generation
                     raise RunnerError("cancelled", "cancellation requested") from None
             self.owned = False
             raise
@@ -221,8 +300,33 @@ class Runner:
         if self.owned and self.budget.wall() >= self.state["lease_until"] - 90:
             self._save()
 
+    def _operation(self, task):
+        """Return the saved operation only after remote evidence binds it to the marker.
+
+        Called at every point that polls or cancels, so a reloaded or adopted
+        state cannot substitute another operation. Discovery runs once per
+        unconfirmed name; absence or mismatch fails closed without using it.
+        """
+        operation = task.get("operation")
+        if operation is not None and self.verified.get(task["request_id"]) != operation:
+            found = self.engine.discover(task["marker"])
+            require(
+                found is not None,
+                "saved operation not confirmed by its submission marker; not used",
+                "uncertain",
+            )
+            require(
+                found == operation,
+                "saved operation differs from its submission marker; not used",
+                "conflict",
+            )
+            self.verified[task["request_id"]] = operation
+        return operation
+
     def _status(self, task):
-        if not task.get("operation"):
+        if task.get("operation"):
+            self._operation(task)
+        else:
             # Discovery is outside the status retry loop. Even a late match is
             # unusable until its name has been saved with the current generation.
             operation = self.engine.discover(task["marker"])
@@ -230,6 +334,7 @@ class Runner:
                 task["state"] = "UNKNOWN"
                 return "UNKNOWN"
             task["operation"] = operation
+            self.verified[task["request_id"]] = operation
             if self.owned:
                 self._save()
             else:
@@ -245,7 +350,7 @@ class Runner:
         for attempt in range(retries + 1):
             self.budget.checkpoint()
             try:
-                result = self.engine.status(task["request_id"], task.get("operation"))
+                result = self.engine.status(task["request_id"], self._operation(task))
                 status = result.get("state")
                 require(
                     status in ACTIVE_EE | TERMINAL_EE | {"UNKNOWN"},
@@ -276,10 +381,10 @@ class Runner:
 
     def status(self, identifier):
         state, _ = self._load(identifier)
-        return public_status(state, self.policy)
+        return self._public(state)
 
     def run(self, recipe, identifier, source=None):
-        recipe = validate_recipe(recipe, self.policy)
+        recipe = self._validate(recipe)
         identifier = run_id(identifier)
         source = source or {"kind": "local", "sha256": digest(recipe)}
         existing, _ = self.store.read(identifier)
@@ -288,8 +393,7 @@ class Runner:
             "run ID already reserved; use status or explicit resume",
             "conflict",
         )
-        buckets = {recipe["destination"]["bucket"], self.policy["control"]["bucket"]}
-        preflight = [self.store.bucket_preflight(x) for x in sorted(buckets)]
+        reservation = self._reservation(recipe, identifier)
         self.budget.constrain(self.budget.started + recipe["limits"]["deadline_seconds"])
         now = self.budget.wall()
         self.state = dict(
@@ -301,23 +405,20 @@ class Runner:
             binding=binding(recipe, self.policy, source),
             policy_sha256=digest(self.policy),
             package_version=version("geecomposer"),
-            image_version=self.policy["image_version"],
             project=self.policy["project"],
-            principal=self.policy["service_account"],
             created=now,
             updated=now,
             deadline=self.budget.started + recipe["limits"]["deadline_seconds"],
             owner=self.owner,
             lease_until=now + LEASE_SECONDS,
             status="running",
-            prefix=f"{recipe['destination']['prefix']}/{identifier}-{uuid.uuid4().hex}",
             tasks=[],
-            inventory=[],
-            bucket_preflight=preflight,
             stop=None,
+            **reservation,
         )
         # Reservation, canonical recipe and execution binding precede EE work.
         self.generation = self.store.write(identifier, self.state, 0)
+        self.written = identity(self.state)
         self.owned = True
         self.budget.heartbeat = self._heartbeat
         return self._execute()
@@ -330,7 +431,7 @@ class Runner:
             "conflict",
         )
         if self.state["status"] == "succeeded":
-            return public_status(self.state, self.policy)
+            return self._public(self.state)
         if self.state["stop"] or self.budget.wall() >= self.state["deadline"] - 60:
             self.budget.finalize()
         else:
@@ -344,6 +445,7 @@ class Runner:
         self.state["owner"] = self.owner
         self.state["lease_until"] = self.budget.wall() + LEASE_SECONDS
         self.generation = self.store.write(identifier, self.state, self.generation)
+        self.written = identity(self.state)
         self.owned = True
         self.budget.heartbeat = self._heartbeat
         if self.state["stop"]:
@@ -356,14 +458,14 @@ class Runner:
     def cancel(self, identifier):
         self.state, self.generation = self._load(identifier)
         if self.state["status"] == "succeeded":
-            return public_status(self.state, self.policy)
+            return self._public(self.state)
         self.state["stop"] = "cancelled"
         self.state["status"] = "cancelling"
         # A live worker observes this generation change at its next state write;
         # a paused submitter's persisted intent is included in cancellation.
         if self.state["owner"] and self.budget.wall() < self.state["lease_until"]:
             self.store.write(identifier, self.state, self.generation)
-            return public_status(self.state, self.policy)
+            return self._public(self.state)
         self.budget.finalize()
         self._initialize()
         for task in self.state["tasks"]:
@@ -372,6 +474,7 @@ class Runner:
         self.state["owner"] = self.owner
         self.state["lease_until"] = self.budget.wall() + LEASE_SECONDS
         self.generation = self.store.write(identifier, self.state, self.generation)
+        self.written = identity(self.state)
         self.owned = True
         self.budget.heartbeat = self._heartbeat
         return self._finish_stop("cancelled")
@@ -490,6 +593,7 @@ class Runner:
                                 "uncertain",
                             )
                             task.update(operation=operation, state="READY")
+                            self.verified[task["request_id"]] = operation
                         except Exception as exc:
                             if isinstance(exc, RunnerError) and exc.status == "auth":
                                 raise
@@ -511,31 +615,35 @@ class Runner:
                         self._save()
                         active += task["state"] in ACTIVE_EE
                 if all(t["state"] == "COMPLETED" for t in self.state["tasks"]):
-                    self.state["inventory"] = self.store.inventory(
-                        self.state["recipe"]["destination"]["bucket"],
-                        self.state["prefix"],
-                    )
-                    verify_inventory(self.state, self.state["inventory"])
+                    self._verify_outputs()
                     self.state["status"] = "succeeded"
                     self._save(release=True)
-                    return public_status(self.state, self.policy)
+                    return self._public(self.state)
                 self.budget.pause(self.policy["poll_seconds"])
         except RunnerError as exc:
             if not self.owned:
                 raise
             if exc.status in ("deadline", "cancelled", "export"):
                 return self._finish_stop(exc.status)
-            self.state["status"] = exc.status
-            self._save(release=True)
-            return public_status(self.state, self.policy)
+            return self._release_with(exc.status)
         except Exception:
             if not self.owned:
                 raise RunnerError("uncertain", "state write outcome unknown") from None
-            self.state["status"] = "uncertain"
-            self._save(release=True)
-            return public_status(self.state, self.policy)
+            return self._release_with("uncertain")
         finally:
             self.budget.heartbeat = None
+
+    def _release_with(self, status):
+        """Final error-path write. If it adopts a newer stop request, that request
+        is not remote evidence: run the ordinary bounded cleanup exactly once."""
+        self.state["status"] = status
+        try:
+            self._save(release=True)
+        except RunnerError as exc:
+            if exc.status != "cancelled" or not self.owned:
+                raise
+            return self._finish_stop("cancelled")
+        return self._public(self.state)
 
     def _finish_stop(self, reason):
         # A separate recovery invocation can finalize an old run, but cannot
@@ -554,31 +662,35 @@ class Runner:
                 try:
                     status = self._status(task)
                     if status in ACTIVE_EE:
-                        self.engine.cancel(task["request_id"], task.get("operation"))
+                        self.engine.cancel(task["request_id"], self._operation(task))
                         self._status(task)
                     if task["state"] not in TERMINAL_EE:
                         self.state["remote_pending"] = True
                 except Exception as exc:
+                    if isinstance(exc, RunnerError) and not self.owned:
+                        raise  # e.g. a rejected record: keep its meaning
                     if isinstance(exc, RunnerError) and exc.status == "auth":
                         self.state["status"] = "auth"
                         self._save(release=True)
-                        return public_status(self.state, self.policy)
+                        return self._public(self.state)
                     self.state["remote_pending"] = True
                 self._save()
-            try:
-                self.state["inventory"] = self.store.inventory(
-                    self.state["recipe"]["destination"]["bucket"], self.state["prefix"]
-                )
-            except Exception:
-                self.state["inventory_unavailable"] = True
+            self._stop_outputs()
             self.state["remote_pending"] = any(
                 t["state"] not in TERMINAL_EE | {"prepared"} for t in self.state["tasks"]
             )
             if reason == "cancelled":
                 self.state["status"] = "uncertain" if self.state["remote_pending"] else "cancelled"
             self._save(release=True)
-        except RunnerError:
+        except RunnerError as exc:
             self.owned = False
             self.budget.heartbeat = None
-            raise
-        return public_status(self.state, self.policy)
+            if exc.status != "cancelled":
+                raise
+            # A further stop request won a write during cleanup (only _save
+            # adoption raises "cancelled" once finalizing). Its durable record
+            # keeps the stop for a later cancel/resume; do not claim cancellation.
+            result = self._public(self.state)
+            result.update(status="uncertain", remote_pending=True)
+            return result
+        return self._public(self.state)

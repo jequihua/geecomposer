@@ -1,4 +1,9 @@
-"""Installed CLI. Parsing and offline validation never discover credentials."""
+"""Installed CLI. Parsing and offline validation never discover credentials.
+
+Mode is chosen before any credential or network access: a bundled policy is
+always hosted; --hosted/--policy are institutional; otherwise personal (Drive,
+explicit user EE credentials, local state). Modes never fall back to each other.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +13,7 @@ from pathlib import Path
 import signal
 
 from .recipe import (
+    CEILINGS,
     EXIT_CODES,
     RunnerError,
     estimate,
@@ -31,7 +37,9 @@ class Parser(argparse.ArgumentParser):
 def parser():
     result = Parser(
         prog="geecomposer",
-        description="Validate and execute bounded Earth Engine recipes",
+        description="Validate and execute bounded Earth Engine recipes. Without "
+        "policy, online commands use personal mode: explicit user EE credentials, "
+        "Drive exports and local run state.",
     )
     result.add_argument(
         "--policy",
@@ -41,6 +49,20 @@ def parser():
         "--hosted",
         action="store_true",
         help="require a bundled, read-only hosted policy",
+    )
+    personal = result.add_argument_group(
+        "personal mode (default without policy; forbidden with --policy/--hosted)"
+    )
+    personal.add_argument("--project", help="Earth Engine project for online personal commands")
+    personal.add_argument(
+        "--credentials",
+        help="Earth Engine saved-login file (default: the EE client's saved-login path); "
+        "never written, never ADC",
+    )
+    personal.add_argument(
+        "--state-dir",
+        help="private writable run-state directory, separate from credentials "
+        "(default: ~/.geecomposer/runs)",
     )
     commands = result.add_subparsers(dest="command", required=True, parser_class=Parser)
     validate = commands.add_parser(
@@ -60,11 +82,36 @@ def parser():
     return result
 
 
+def _execute(runner, args, recipe, source):
+    handlers = {}
+    try:
+        # Signal handlers only set a flag. Normal fenced control flow
+        # performs cancellation; no network or JSON writes in a handler.
+        def cancelled(signum, frame):
+            runner.cancel_requested = True
+
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            handlers[sig] = signal.signal(sig, cancelled)
+        if args.command == "run":
+            return runner.run(recipe, args.run_id, source)
+        return getattr(runner, args.command)(args.run_id)
+    finally:
+        for sig, handler in handlers.items():
+            signal.signal(sig, handler)
+
+
 def main(argv=None, *, connector=None, budget_factory=None):
     try:
         args = parser().parse_args(argv)
         bundled = BUNDLED_POLICY.is_file()
         hosted = bundled or args.hosted
+        personal = not (hosted or args.policy is not None)
+        options = (args.project, args.credentials, args.state_dir)
+        require(
+            personal or all(x is None for x in options),
+            "personal options are forbidden in institutional or hosted mode",
+        )
+        require("" not in options, "personal options cannot be empty")
         require(
             not (hosted and args.policy), "hosted callers cannot supply policy paths"
         )
@@ -103,6 +150,41 @@ def main(argv=None, *, connector=None, budget_factory=None):
             result = estimate(recipe)
             if args.command == "validate":
                 result["status"] = "validated"
+        elif personal:
+            require(
+                getattr(args, "run_id", None),
+                "online commands require an explicit run ID",
+            )
+            from .runner import run_id
+            from .runner_cloud import Budget
+            from . import runner_personal as local
+
+            run_id(args.run_id)
+            settings = local.settings(args.project)
+            recipe = None
+            if args.command == "run":
+                require(
+                    not args.recipe.startswith(("gs:", "http:", "https:"))
+                    and args.recipe_generation is None,
+                    "local recipes require a bounded JSON file",
+                )
+                recipe = local.validate(read_json(args.recipe, CEILINGS["recipe_bytes"]))
+            state = local.default_state_dir() if args.state_dir is None else Path(args.state_dir)
+            # status reads local state only; it never loads credentials.
+            credentials = None
+            if args.command != "status":
+                credentials = (
+                    local.default_credentials()
+                    if args.credentials is None
+                    else Path(args.credentials)
+                )
+                local.separate(credentials, state)
+            budget = (budget_factory or Budget)(settings["limits"]["deadline_seconds"])
+            store, engine, loaded = (connector or local.connect)(
+                settings, budget, credentials=credentials, state=state
+            )
+            runner = local.PersonalRunner(settings, store, engine, loaded, budget)
+            result = _execute(runner, args, recipe, None)
         else:
             require(
                 policy is not None, "online execution requires administrator policy"
@@ -139,22 +221,7 @@ def main(argv=None, *, connector=None, budget_factory=None):
             if args.command == "run" and hosted:
                 value, source = store.read_recipe(args.recipe, args.recipe_generation)
                 recipe = validate_recipe(value, policy)
-            handlers = {}
-            try:
-                # Signal handlers only set a flag. Normal fenced control flow
-                # performs cancellation; no network or JSON writes in a handler.
-                def cancelled(signum, frame):
-                    runner.cancel_requested = True
-
-                for sig in (signal.SIGINT, signal.SIGTERM):
-                    handlers[sig] = signal.signal(sig, cancelled)
-                if args.command == "run":
-                    result = runner.run(recipe, args.run_id, source)
-                else:
-                    result = getattr(runner, args.command)(args.run_id)
-            finally:
-                for sig, handler in handlers.items():
-                    signal.signal(sig, handler)
+            result = _execute(runner, args, recipe, source)
         print(json.dumps(result, sort_keys=True, allow_nan=False))
         return EXIT_CODES[result["status"]]
     except RunnerError as exc:

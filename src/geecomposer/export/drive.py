@@ -25,6 +25,7 @@ def export_to_drive(
     *,
     crs: str | None = None,
     crs_transform: list[float] | tuple[float, ...] | None = None,
+    no_data: int | float | None = None,
 ) -> ee.batch.Export.image:
     """Create an Earth Engine export task for Google Drive.
 
@@ -53,6 +54,10 @@ def export_to_drive(
         Maximum number of pixels to export. Defaults to 1e13.
     crs, crs_transform:
         Explicit export grid. Affine transform requires CRS and excludes scale.
+    no_data:
+        Optional finite GeoTIFF nodata metadata value. The image is never
+        unmasked or cast; choose a value compatible with its pixel type and
+        distinct from valid values. Omitted by default.
 
     Returns
     -------
@@ -95,6 +100,14 @@ def export_to_drive(
             if not isinstance(crs, str) or not crs.strip():
                 raise GeeComposerError("crs must be nonempty")
             options["crs"] = crs
+    if no_data is not None:
+        try:
+            valid = type(no_data) in (int, float) and math.isfinite(no_data)
+        except OverflowError:
+            valid = False
+        if not valid:
+            raise GeeComposerError("no_data must be finite and numeric")
+        options["formatOptions"] = {"noData": no_data}
 
     geometry = to_ee_geometry(region)
 
