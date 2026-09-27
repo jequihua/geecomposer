@@ -965,7 +965,7 @@ print("clean")
     env = {k: v for k, v in os.environ.items() if not k.startswith(("GOOGLE_", "EARTHENGINE_"))}
     env.update(HOME=str(tmp_path), USERPROFILE=str(tmp_path), PYTHONDONTWRITEBYTECODE="1")
     result = subprocess.run(
-        [sys.executable, "-I", "-c", code], capture_output=True, text=True, env=env, cwd=tmp_path
+        [sys.executable, "-I", "-B", "-c", code], capture_output=True, text=True, env=env, cwd=tmp_path
     )
     assert result.returncode == 0 and result.stdout.strip() == "clean", result.stderr[-2000:]
     assert list(tmp_path.iterdir()) == []
@@ -1188,7 +1188,7 @@ results["still_fifo"] = __import__("stat").S_ISFIFO(os.lstat(fifo).st_mode)
 print(json.dumps(results))
 """
     result = subprocess.run(
-        [sys.executable, "-I", "-c", code, str(tmp_path)],
+        [sys.executable, "-I", "-B", "-c", code, str(tmp_path)],
         capture_output=True,
         text=True,
         timeout=30,

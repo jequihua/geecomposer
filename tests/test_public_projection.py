@@ -39,7 +39,7 @@ for call in (lambda: socket.getaddrinfo("localhost", 1),
         raise AssertionError("guard bypass")
 """
     )
-    subprocess.run([sys.executable, "-I", "-c", code], check=True)
+    subprocess.run([sys.executable, "-I", "-B", "-c", code], check=True)
 
 
 def test_environment_removes_credentials(gate, monkeypatch, tmp_path):
@@ -215,6 +215,7 @@ def test_skip_policy_is_wired_into_the_test_stage(gate, tmp_path, windows, skip,
         [
             sys.executable,
             "-I",
+            "-B",
             "-c",
             child,
             str(gate.ROOT / "tools"),
