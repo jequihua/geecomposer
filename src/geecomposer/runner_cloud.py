@@ -16,6 +16,7 @@ from urllib.request import Request, build_opener, ProxyHandler, HTTPRedirectHand
 
 import ee
 from google.auth.credentials import Credentials
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import AuthorizedSession
 from google.cloud import storage
 
@@ -66,15 +67,38 @@ class _NoRedirect(HTTPRedirectHandler):
         raise RunnerError("auth", "remote redirect refused")
 
 
-def _read_url(url, budget, *, headers=None, method="GET", body=None, limit=16384):
-    """Fixed-origin callers; ignore ambient proxy configuration and redirects."""
+def _identity(headers):
+    """Copy of headers requesting identity; every Accept-Encoding casing is replaced."""
+    result = {k: v for k, v in (headers or {}).items() if k.lower() != "accept-encoding"}
+    result["Accept-Encoding"] = "identity"
+    return result
+
+
+def _plain(response_headers):
+    """No Content-Encoding, or exactly one header whose trimmed value is identity."""
+    values = [v for k, v in response_headers.items() if k.lower() == "content-encoding"]
+    return not values or (len(values) == 1 and values[0].strip().lower() == "identity")
+
+
+def _read_url(url, budget, *, headers=None, method="GET", body=None, limit=16384, identity=False):
+    """Fixed-origin callers; ignore ambient proxy configuration and redirects.
+
+    identity=True (EE paths) requests uncompressed responses at this final
+    boundary. A response with any other content coding is closed unread and
+    returned with data None; callers apply their status rules, then refuse it.
+    """
     opener = build_opener(ProxyHandler({}), _NoRedirect())
+    if identity:
+        headers = _identity(headers)
     request = Request(url, data=body, headers=headers or {}, method=method)
     try:
         response = opener.open(request, timeout=budget.timeout())
     except HTTPError as exc:
         response = exc
     with response:
+        if identity and not _plain(response.headers):
+            budget.timeout()
+            return response.code, {k.lower(): v for k, v in response.headers.items()}, None
         chunks, size = [], 0
         while True:
             budget.timeout()
@@ -211,11 +235,13 @@ class EETransport:
             method=method,
             body=body,
             limit=16 * MAX_STATE,
+            identity=True,
         )
         if status in (429, 500, 502, 503, 504):
             raise TimeoutError("transient EE response")
         if status in (401, 403):
             raise RunnerError("auth", "EE permission denied")
+        require(data is not None, "unsupported EE response encoding", "uncertain")
         return _Response(status, headers), data
 
 
@@ -388,6 +414,27 @@ class GCS:
             raise remote_error(exc) from None
 
 
+# RFC 6749 section 5.2 token-endpoint codes refusing the presented grant or client.
+_REFUSALS = ("invalid_grant", "invalid_client", "unauthorized_client")
+
+
+def _refused(exc):
+    """Positive structured credential refusal, never inferred from exception text.
+
+    google-auth attaches the decoded token-endpoint mapping as args[1]. A 2xx reply
+    without access_token also carries that mapping but is raised from KeyError; it
+    is a response-protocol failure, as are retryable and unknown or ill-typed codes.
+    """
+    data = exc.args[1] if len(exc.args) > 1 else None
+    code = data.get("error") if isinstance(data, dict) else None
+    return (
+        type(code) is str
+        and code in _REFUSALS
+        and not exc.retryable
+        and not isinstance(exc.__cause__, KeyError)
+    )
+
+
 class EarthEngine:
     # Fixed origins for the EE transport; a personal subclass adds the token host.
     hosts = ("earthengine.googleapis.com",)
@@ -415,10 +462,15 @@ class EarthEngine:
                 http_transport=EETransport(self.budget, self.hosts),
             )
             self.credentials, self.project = credentials, project
-        except Exception as exc:
-            if isinstance(exc, RunnerError):
-                raise
-            raise RunnerError("auth", "EE initialization or project access failed") from None
+        except RunnerError:
+            raise  # explicit statuses (auth 401/403, deadline, encoding) keep their meaning
+        except RefreshError as exc:
+            if _refused(exc):
+                raise RunnerError("auth", "EE credential refresh refused") from None
+            raise RunnerError("uncertain", "EE initialization response unavailable") from None
+        except Exception:
+            # Decoding/protocol/transient failures are not identity evidence.
+            raise RunnerError("uncertain", "EE initialization response unavailable") from None
 
     def prepare(self, recipe, prefix, previous=None):
         from .runner_science import prepare
@@ -469,9 +521,12 @@ class EarthEngine:
                 url = f"https://earthengine.googleapis.com/v1/projects/{self.project}/operations?{urlencode(query)}"
                 headers = {}
                 self.credentials.before_request(self.auth_request, "GET", url, headers)
-                status, _, data = _read_url(url, self.budget, headers=headers, limit=MAX_STATE)
+                status, _, data = _read_url(
+                    url, self.budget, headers=headers, limit=MAX_STATE, identity=True
+                )
                 require(status not in (401, 403), "operation listing permission denied", "auth")
                 require(status == 200, "operation listing inaccessible or unavailable", "uncertain")
+                require(data is not None, "unsupported EE response encoding", "uncertain")
                 page = parse_json(data, MAX_STATE)
                 require(
                     type(page) is dict and not page.get("unreachable"),

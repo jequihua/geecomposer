@@ -698,7 +698,10 @@ def test_initialization_failure_is_auth_without_token_text(tmp_path, monkeypatch
     creds = personal.load_credentials(credential_file(tmp_path))
 
     def refused(**kwargs):
-        raise RefreshError("invalid_grant " + SECRET)
+        raise RefreshError(
+            "invalid_grant " + SECRET,
+            {"error": "invalid_grant", "error_description": SECRET},
+        )
 
     monkeypatch.setattr(ee, "Initialize", refused)
     with pytest.raises(RunnerError) as exc:
@@ -710,7 +713,9 @@ def test_initialization_failure_is_auth_without_token_text(tmp_path, monkeypatch
 def token_transport(monkeypatch, pages=()):
     calls, pending = [], list(pages)
 
-    def read_url(url, budget, *, headers=None, method="GET", body=None, limit=16384):
+    def read_url(
+        url, budget, *, headers=None, method="GET", body=None, limit=16384, identity=False
+    ):
         calls.append(dict(url=url, method=method, headers=dict(headers or {})))
         if url == oauth.TOKEN_URI:
             data = {"access_token": "ACCESS", "expires_in": 3600, "token_type": "Bearer"}

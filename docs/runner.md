@@ -338,7 +338,35 @@ Metadata, preflight, graph evaluations, export, status and storage calls have at
 most 10-second request timeouts and share the application budget. Native EE
 automatic retries are disabled. Only transient status failures retry (three
 retries, bounded 15/30/60-second exponential backoff plus deterministic per-ID
-jitter, capped at 60); unknown responses and permission failures do not. Storage
+jitter, capped at 60); unknown responses and permission failures do not.
+
+EE and token requests ask for uncompressed responses only. The runner's EE
+transport replaces any caller `Accept-Encoding` header, in any letter case, with
+`identity` on the outgoing request; it does not modify the caller's header
+dictionary or other headers, and it contains no decompressor.
+
+A response is accepted with no `Content-Encoding`, or with exactly one whose
+trimmed, case-insensitive value is `identity`. Any other coding (gzip, deflate,
+unknown, empty, compound or duplicated) is closed unread and refused as
+`uncertain` ("unsupported EE response encoding"), without retry. HTTP 401/403
+still map to `auth`, and 429/5xx keep their transient handling, even when their
+bodies are compressed. Byte limits and deadline checks are unchanged.
+
+EE initialization reports `auth` only for:
+
+- an explicit runner permission status;
+- a google-auth refresh error that carries a structured, non-retryable token
+  endpoint refusal code: `invalid_grant`, `invalid_client` or
+  `unauthorized_client` (RFC 6749 §5.2). Exception text is never inspected.
+
+A token reply without an access token (for example HTTP 200 `{}`), or one with
+a retryable, unknown, ill-typed or absent code, reports `uncertain`.
+
+Undecodable, malformed, transient or otherwise unclassified initialization
+responses report `uncertain` ("EE initialization response unavailable"), and
+deadlines stay `deadline`. No response body or exception text is shown.
+
+Storage
 operations use `retry=None`, and no ambiguous conditional write is blindly
 retried. Deadline checks run inside the EE HTTP transport, including the seasonal
 helper's synchronous evaluations. GCS pagination checks deadlines on every
@@ -445,7 +473,7 @@ links. It never includes full recipes/AOIs, tokens or raw external exception tex
 | auth | 3 | Identity, credential file, allowlist, permission or required-bucket access failure. |
 | no_data | 4 | Empty scene collection or unusable calibration/season. |
 | conflict | 5 | Reserved ID, active ownership, changed binding/configuration or failed CAS. |
-| uncertain | 6 | Unknown submission/state outcome, unreconciled cancellation or unavailable response. |
+| uncertain | 6 | Unknown submission/state outcome, unreconciled cancellation, unavailable or undecodable response (including during EE initialization) or refused response encoding. |
 | deadline | 7 | Original work deadline reached; inspect remote_pending and original task IDs. |
 | cancelled | 8 | Cancellation finalized; submitted tasks are known terminal, other tasks unsubmitted. |
 | export | 9 | EE terminal export failure; partial evidence retained and siblings cancelled best effort. |
