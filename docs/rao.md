@@ -46,6 +46,17 @@ contribute zero in that reference domain. At least two common reference pixels
 are required. Out-of-domain values are not clipped. A tied PCA eigenspace at
 the cutoff is retained in full to avoid selecting an arbitrary orientation.
 
+Each GN coordinate `pc_i` is the dot product of the standardized bands with PCA
+row `i`, built from explicit per-band multiplications and additions in model band
+order. It deliberately avoids a band `reduce(Reducer.sum())`: on the tested
+inputs, pixels with fractional masks (for example partially covered cells at a
+region clip) returned coordinates scaled by approximately their mask value.
+Every valid pixel therefore contributes its unscaled coordinates, as the
+equal-probability definition requires; masks themselves are unchanged. This
+correction is verified offline only. Rebuilt-image, Linux and live raster
+qualification are pending, and earlier Rao GN rasters with partially covered
+edge cells are not accepted.
+
 Raw transforms default to no rounding. A model and its transform must have
 identical `decimal_places`; explicit rounding uses decimal scaling with binary
 double arithmetic and ties-to-even on the scaled value. The named NIRv protocol

@@ -245,12 +245,14 @@ class RaoNormalization:
             .subtract(ee.Image.constant(list(self.means)))
             .divide(ee.Image.constant(list(self.scales)))
         )
-        pcs = [
-            z.multiply(ee.Image.constant(list(row)))
-            .reduce(ee.Reducer.sum())
-            .rename(f"pc_{i}")
-            for i, row in enumerate(self.loadings)
-        ]
+        # Explicit scalar additions, not a band reducer: on fractional (clip-edge)
+        # masks the observed reduce(sum) scaled coordinates by the mask value.
+        pcs = []
+        for i, row in enumerate(self.loadings):
+            pc = z.select(0).multiply(row[0])
+            for k in range(1, len(row)):
+                pc = pc.add(z.select(k).multiply(row[k]))
+            pcs.append(pc.rename(f"pc_{i}"))
         return ee.Image.cat(pcs).toDouble()
 
 
