@@ -12,8 +12,10 @@ from importlib.metadata import version
 import re
 import uuid
 
-from .recipe import RunnerError, digest, require, validate_recipe
-from .runner_science import config_fingerprint, discovery_marker, request_config
+import ee
+
+from .recipe import EXIT_CODES, RunnerError, digest, require, validate_recipe
+from .runner_science import PHASES, config_fingerprint, discovery_marker, request_config
 
 LEASE_SECONDS = 120
 TERMINAL_EE = {"COMPLETED", "FAILED", "CANCELLED"}
@@ -22,11 +24,115 @@ ACTIVE_EE = {"READY", "RUNNING", "CANCEL_REQUESTED"}
 
 # Record fields a concurrent stop request or normal progress may change. Every
 # other field, and each task's submission identity, is fixed once written.
+# "error" is diagnostic only: never part of the run or submission identity.
 PROGRESS_FIELDS = frozenset(
     {"status", "stop", "owner", "lease_until", "updated", "remote_pending", "inventory",
-     "inventory_unavailable", "tasks"}
+     "inventory_unavailable", "tasks", "error"}
 )
 TASK_IDENTITY = ("request_id", "name", "marker", "fingerprint")
+# Fixed categories for failures that are not the product's own RunnerError. Order
+# matters: TimeoutError and ConnectionError are OSError subclasses.
+UNEXPECTED = (
+    (TimeoutError, "unexpected timeout"),
+    (ee.EEException, "unexpected service error"),
+    (OSError, "unexpected transport or system error"),
+)
+CATEGORIES = frozenset(r for _, r in UNEXPECTED) | {"unexpected internal error"}
+# The ONLY RunnerError messages a diagnosis may carry: fixed execution-path product texts
+# (initialization, preparation, state, submission, polling, outputs). Any other message,
+# whatever its characters, is reduced to its fixed status name.
+MESSAGES = frozenset(
+    {
+        # initialization and the EE/HTTP boundary
+        "EE initialization response unavailable", "EE credential refresh refused",
+        "verified attached credentials required", "unexpected EE endpoint", "EE permission denied",
+        "unsupported EE response encoding", "remote response size limit exceeded",
+        "remote redirect refused", "application deadline reached",
+        # scientific preparation
+        "no input scenes", "scene limit exceeded", "scene snapshot exceeds budget",
+        "unusable source scene identities", "duplicate source identity",
+        "unusable projected AOI bound", "cannot establish output pixel bound",
+        "projected pixel/calibration limit exceeded", "total scene limit exceeded",
+        "no usable seasonal observations", "insufficient calibration samples",
+        "output task limit exceeded", "private provenance exceeds byte budget",
+        "task budget exceeded", "duplicate prepared product",
+        "prepared configuration changed on resume", "scientific provenance changed on resume",
+        "request-bound configuration changed on resume",
+        # state
+        "run ownership lost", "run ownership expired", "conditional state conflict",
+        "concurrent record changed run or submission identity; not adopted",
+        "state write outcome unknown", "local state write failed; inspect the state directory",
+        "local run state unreadable", "local run state is locked by another process",
+        "local run state is corrupt or unrecognized; it was not modified",
+        "local state size limit exceeded", "remote write outcome unknown",
+        "remote response unavailable", "remote permission denied",
+        "private manifest size limit exceeded", "state generation unavailable",
+        # submission and polling
+        "invalid EE request ID", "submission operation unavailable", "submission outcome unknown",
+        "original submission remains unresolved", "unknown EE status response",
+        "EE status reconciliation unavailable", "EE status permission denied", "EE export failed",
+        "EE export cancelled", "cancellation requested",
+        "operation discovery required before status",
+        "saved operation not confirmed by its submission marker; not used",
+        "saved operation differs from its submission marker; not used",
+        "operation listing permission denied", "operation listing inaccessible or unavailable",
+        "incomplete operation listing", "invalid operation listing page",
+        "malformed or repeated operation record", "invalid or repeated operation page token",
+        "ambiguous operation discovery",
+        "operation discovery page cap reached; enumeration incomplete",
+        "operation listing could not be verified",
+        "operation listing unavailable; no automatic retry",
+        # institutional outputs
+        "missing or oversized output inventory", "required product missing",
+        "unexpected object in run output inventory", "output listing page limit exceeded",
+        "output inventory exceeds bound", "output outside exact run prefix",
+    }
+)
+UNKNOWN_ERROR = {"phase": "unknown", "reason": "unrecognized diagnostic"}
+
+
+def known_reason(value):
+    """A fixed status name, a fixed category, or "<status>: <allowlisted message>"."""
+    if type(value) is not str or len(value) > 200:
+        return False
+    if value in EXIT_CODES or value in CATEGORIES:
+        return True
+    status, separator, message = value.partition(": ")
+    return bool(separator) and status in EXIT_CODES and message in MESSAGES
+
+
+def diagnosis(exc, phase):
+    """Allowlisted, bounded failure evidence: never exception text, URLs, response bodies,
+    paths or class names. A RunnerError keeps its status and, only when it is one of the
+    fixed MESSAGES, that message; anything else is a fixed category."""
+    tagged = getattr(exc, "__dict__", {}).get("phase")
+    phase = tagged if type(tagged) is str and tagged in PHASES else phase
+    if isinstance(exc, RunnerError):
+        message = exc.args[0] if len(exc.args) == 1 else None
+        reason = f"{exc.status}: {message}" if type(message) is str and message in MESSAGES else exc.status
+    else:
+        reason = next((r for t, r in UNEXPECTED if isinstance(exc, t)), "unexpected internal error")
+    return dict(phase=phase, reason=reason if known_reason(reason) else "unexpected internal error")
+
+
+def public_error(value, persisted=True):
+    """Public view of a diagnosis (persisted, raised or edited on disk); persisted is False
+    when no store write confirmed it. Never raises; anything not exactly well formed and
+    known is shown as a fixed unknown."""
+    if value is None:
+        return None
+    try:
+        valid = (
+            type(value) is dict
+            and set(value) == {"phase", "reason"}
+            and type(value["phase"]) is str
+            and value["phase"] in PHASES
+            and known_reason(value["reason"])
+        )
+    except Exception:
+        valid = False
+    shown = {"phase": value["phase"], "reason": value["reason"]} if valid else UNKNOWN_ERROR
+    return dict(shown, persisted=persisted)
 
 
 def identity(state):
@@ -54,7 +160,7 @@ def binding(recipe, policy, source):
     return digest(dict(recipe=recipe, policy=policy, source=source, package=version("geecomposer")))
 
 
-def public_status(state, policy):
+def public_status(state, policy, persisted=True):
     """Small allowlisted shared-log view; detailed provenance stays in private GCS."""
     loc = policy["control"]
     return dict(
@@ -72,6 +178,7 @@ def public_status(state, policy):
             else []
         ),
         remote_pending=state.get("remote_pending", False),
+        error=public_error(state.get("error"), persisted),
     )
 
 
@@ -152,6 +259,10 @@ class Runner:
         # process (exportImage response or exact-marker discovery). A name read
         # from persisted state is only a claim until it appears here.
         self.verified = {}
+        # Step for diagnostics; science preparation tags its own sub-steps.
+        self.phase = "initialize"
+        # The diagnosis last confirmed by a store read or write (None if none).
+        self.saved_error = None
 
     # Destination-specific steps. These GCS defaults are the institutional
     # contract; runner_personal overrides them for Drive without GCS inventory.
@@ -190,8 +301,11 @@ class Runner:
         except Exception:
             self.state["inventory_unavailable"] = True
 
+    def _persisted(self, state):
+        return state.get("error") in (None, self.saved_error)
+
     def _public(self, state):
-        return public_status(state, self.policy)
+        return public_status(state, self.policy, self._persisted(state))
 
     def _initialize(self):
         if not self.initialized:
@@ -238,6 +352,7 @@ class Runner:
                 "invalid persisted task state",
                 "conflict",
             )
+        self.saved_error = state.get("error")
         return state, generation
 
     def _save(self, *, release=False):
@@ -262,6 +377,7 @@ class Runner:
         try:
             self.generation = self.store.write(self.state["run_id"], self.state, self.generation)
             self.written = identity(self.state)
+            self.saved_error = self.state.get("error")
         except RunnerError as exc:
             # A cancel requester only sets stop/status on a copy of our last
             # write. Honor that request by merging it into this worker's trusted
@@ -480,8 +596,12 @@ class Runner:
         return self._finish_stop("cancelled")
 
     def _execute(self):
+        # A stale diagnosis is replaced only by this invocation's own outcome.
+        self.state.pop("error", None)
         try:
+            self.phase = "initialize"
             self._initialize()
+            self.phase = "prepare"
             require(
                 not any(t["state"] == "UNKNOWN" for t in self.state["tasks"]),
                 "original submission remains unresolved",
@@ -510,6 +630,7 @@ class Runner:
                     "duplicate prepared product",
                     "conflict",
                 )
+                self.phase = "persist"
                 plan = [{"name": t["name"], "fingerprint": t["fingerprint"]} for t in prepared]
                 if "plan" in self.state:
                     require(
@@ -527,6 +648,7 @@ class Runner:
                 self._save()
                 for product in prepared:
                     if product["name"] not in {t["name"] for t in self.state["tasks"]}:
+                        self.phase = "allocate"
                         request_id = self.engine.new_id()
                         require(
                             type(request_id) is str
@@ -548,6 +670,7 @@ class Runner:
                                 state="prepared",
                             )
                         )
+                        self.phase = "persist"
                         self._save()
                 for task in self.state["tasks"]:
                     config = request_config(configs[task["name"]], task["marker"])
@@ -562,6 +685,7 @@ class Runner:
                 self.budget.checkpoint()
                 for task in self.state["tasks"]:
                     if task["state"] in ACTIVE_EE | {"submitting"}:
+                        self.phase = "poll"
                         status = self._status(task)
                         self._save()
                         require(
@@ -578,8 +702,10 @@ class Runner:
                     if task["state"] == "prepared":
                         self.budget.checkpoint()
                         task["state"] = "submitting"
+                        self.phase = "persist"
                         self._save()  # Durable ID + fingerprint + intent, before exportImage.
                         self.budget.checkpoint()
+                        self.phase = "submit"
                         try:
                             response = self.engine.submit(task["request_id"], configs[task["name"]])
                             operation = response.get("name")
@@ -615,20 +741,28 @@ class Runner:
                         self._save()
                         active += task["state"] in ACTIVE_EE
                 if all(t["state"] == "COMPLETED" for t in self.state["tasks"]):
+                    self.phase = "outputs"
                     self._verify_outputs()
                     self.state["status"] = "succeeded"
                     self._save(release=True)
                     return self._public(self.state)
+                self.phase = "poll"
                 self.budget.pause(self.policy["poll_seconds"])
         except RunnerError as exc:
             if not self.owned:
+                # Not persisted by this worker: the CLI reports it as unconfirmed.
+                exc.diagnosis = diagnosis(exc, self.phase)
                 raise
+            self.state["error"] = diagnosis(exc, self.phase)
             if exc.status in ("deadline", "cancelled", "export"):
                 return self._finish_stop(exc.status)
             return self._release_with(exc.status)
-        except Exception:
+        except Exception as exc:
             if not self.owned:
-                raise RunnerError("uncertain", "state write outcome unknown") from None
+                error = RunnerError("uncertain", "state write outcome unknown")
+                error.diagnosis = diagnosis(exc, self.phase)
+                raise error from None
+            self.state["error"] = diagnosis(exc, self.phase)
             return self._release_with("uncertain")
         finally:
             self.budget.heartbeat = None
@@ -641,6 +775,8 @@ class Runner:
             self._save(release=True)
         except RunnerError as exc:
             if exc.status != "cancelled" or not self.owned:
+                # The original cause survives in output, never as a persisted claim.
+                exc.diagnosis = self.state.get("error")
                 raise
             return self._finish_stop("cancelled")
         return self._public(self.state)

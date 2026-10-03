@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "workflow": "rao",
+  "dataset": "sentinel2",
+  "bands": [
+    "B4",
+    "B8",
+    "B11"
+  ],
+  "start": "2024-06-01",
+  "end": "2024-07-01",
+  "mask": "s2_cloud_score_plus",
+  "reducer": "median",
+  "rao": {
+    "normalization": "gn",
+    "window_size": 3,
+    "decimal_places": null
+  },
+  "aoi": {
+    "type": "Polygon",
+    "coordinates": [
+      [
+        [
+          10.0,
+          50.0
+        ],
+        [
+          10.01,
+          50.0
+        ],
+        [
+          10.01,
+          50.01
+        ],
+        [
+          10.0,
+          50.01
+        ],
+        [
+          10.0,
+          50.0
+        ]
+      ]
+    ]
+  },
+  "grid": {
+    "crs": "EPSG:32632",
+    "transform": [
+      20,
+      0,
+      571660,
+      0,
+      -20,
+      5539120
+    ]
+  },
+  "destination": {
+    "drive_folder": "geecomposer-examples"
+  },
+  "limits": {
+    "scenes": 100,
+    "pixels": 20000,
+    "calibration_pixels": 20000,
+    "outputs": 1,
+    "active_exports": 1
+  }
+}

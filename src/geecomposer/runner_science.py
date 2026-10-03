@@ -18,6 +18,22 @@ from .transforms.indices import ndvi, nirv
 from .transforms.expressions import expression_transform
 from .recipe import RunnerError, canonical, digest, pixel_bound, require
 
+# Diagnostic step names (runner and preparation); nothing else is ever recorded.
+PHASES = frozenset(
+    {"initialize", "prepare", "bounds", "scenes", "calibration", "graph", "persist", "allocate",
+     "submit", "poll", "outputs"}
+)
+
+
+def tag(exc, name):
+    """Record the step a failure interrupted (first tag wins); the exception, its
+    status and its propagation are unchanged."""
+    try:
+        if "phase" not in vars(exc):
+            exc.phase = name
+    except (TypeError, AttributeError):
+        pass
+
 
 def _snapshot(recipe, region, start, end, saved=None):
     module = {
@@ -75,8 +91,19 @@ def prepare(recipe, prefix, budget, previous=None):
     The runner persists sources and fingerprints before submitting anything.
     Resume uses exactly these sources and rejects a changed configuration.
     prefix is the reserved GCS object prefix, or the Drive file-name base.
+    A failure carries the step it interrupted as its diagnostic phase.
     """
+    step = ["prepare"]
+    try:
+        return _prepare(recipe, prefix, budget, previous, step)
+    except Exception as exc:
+        tag(exc, step[0])
+        raise
+
+
+def _prepare(recipe, prefix, budget, previous, step):
     budget.timeout()
+    step[0] = "bounds"
     grid = RaoGrid(**recipe["grid"])
     region = ee.Geometry(recipe["aoi"], proj="EPSG:4326", geodesic=False)
     # EE computes the enclosing rectangle in the requested CRS, including curved
@@ -115,6 +142,7 @@ def prepare(recipe, prefix, budget, previous=None):
                 max(recipe["end"], seasonal.get("reference_end", recipe["end"])),
             )
         ]
+    step[0] = "scenes"
     sources, collections = {}, {}
     for key, start, end in intervals:
         budget.timeout()
@@ -135,6 +163,7 @@ def prepare(recipe, prefix, budget, previous=None):
         nodata=-9999,
     )
     if workflow == "seasonal_nirv":
+        step[0] = "calibration"
         options = dict(recipe.get("seasonal", {}))
         scene_outputs = options.pop("scene_outputs", True)
         try:
@@ -182,6 +211,7 @@ def prepare(recipe, prefix, budget, previous=None):
             transform=transform() if transform else None,
             preprocess=gamma_map() if "preprocess" in recipe else None,
         )
+        step[0] = "graph"
         images = {}
         for key, start, end in intervals:
             col = collections[key]
@@ -197,6 +227,7 @@ def prepare(recipe, prefix, budget, previous=None):
             band_names = recipe["bands"] if not transform else [recipe["transform"]]
             model = None
             if normalization == "gn":
+                step[0] = "calibration"
                 # Explicit valid-sample check provides a stable no-data result.
                 count = (
                     images["all"]
@@ -226,6 +257,7 @@ def prepare(recipe, prefix, budget, previous=None):
                     decimal_places=options.get("decimal_places"),
                 )
                 provenance.update(calibration=model.to_json(), calibration_sha256=model.fingerprint)
+            step[0] = "graph"
             images["all"] = rao_q(
                 images["all"],
                 band_names,
@@ -238,6 +270,7 @@ def prepare(recipe, prefix, budget, previous=None):
             ("year_" + key if workflow == "yearly" else workflow, value)
             for key, value in images.items()
         ]
+    step[0] = "graph"
     require(0 < len(products) <= recipe["limits"]["outputs"], "output task limit exceeded")
     require(
         len(canonical(provenance)) <= 700_000,

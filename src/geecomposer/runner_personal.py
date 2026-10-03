@@ -22,7 +22,7 @@ from google.oauth2.credentials import Credentials
 import google_auth_httplib2
 
 from .recipe import CEILINGS, RunnerError, canonical, parse_json, require, validate_recipe
-from .runner import Runner, run_id
+from .runner import Runner, public_error, run_id
 from .runner_cloud import MAX_STATE, EarthEngine, EETransport
 
 MAX_CREDENTIAL = 65_536
@@ -330,7 +330,7 @@ class LocalStore:
         return generation + 1
 
 
-def public_status(state, verified=None):
+def public_status(state, verified=None, persisted=True):
     """Task identities and Drive names only; no invented file IDs or URLs.
 
     operation_evidence is "verified" only for an operation this invocation
@@ -364,6 +364,7 @@ def public_status(state, verified=None):
         ],
         remote_pending=state.get("remote_pending", False),
         raster_verification="pending",
+        error=public_error(state.get("error"), persisted),
     )
 
 
@@ -387,7 +388,7 @@ class PersonalRunner(Runner):
         pass
 
     def _public(self, state):
-        return public_status(state, self.verified)
+        return public_status(state, self.verified, self._persisted(state))
 
 
 def connect(settings, budget, *, credentials, state):

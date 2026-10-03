@@ -225,7 +225,17 @@ def main(argv=None, *, connector=None, budget_factory=None):
         print(json.dumps(result, sort_keys=True, allow_nan=False))
         return EXIT_CODES[result["status"]]
     except RunnerError as exc:
-        print(json.dumps({"status": exc.status, "message": str(exc)}, sort_keys=True))
+        result = {"status": exc.status, "message": str(exc)}
+        diagnosis = getattr(exc, "diagnosis", None)
+        if diagnosis is not None:
+            from .runner import MESSAGES, public_error
+
+            # Raised execution errors were never confirmed by a state write; their message
+            # follows the same fixed allowlist as the diagnosis beside it.
+            result["error"] = public_error(diagnosis, persisted=False)
+            if result["message"] not in MESSAGES:
+                result["message"] = "execution failed; inspect run status"
+        print(json.dumps(result, sort_keys=True))
         return exc.code
     except (Exception, KeyboardInterrupt):
         print(

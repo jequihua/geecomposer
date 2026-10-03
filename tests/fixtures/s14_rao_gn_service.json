@@ -1,0 +1,18 @@
+{
+  "label": "SYNTHETIC deterministic Earth Engine responses for the public personal Rao GN recipe; not observed service output",
+  "steps": {
+    "bounds": [[[571660, 5538000], [572380, 5538000], [572380, 5539120], [571660, 5539120], [571660, 5538000]]],
+    "scene_count": 2,
+    "scene_ids": ["20240603T102021_20240603T102021_T32UNA", "20240613T102021_20240613T102021_T32UNA"],
+    "calibration_count": 2016,
+    "calibration_summary": {
+      "B4_count": 2016, "B4_mean": 900.0, "B4_min": 500.0, "B4_max": 1300.0,
+      "B8_count": 2016, "B8_mean": 2600.0, "B8_min": 1500.0, "B8_max": 3500.0,
+      "B11_count": 2016, "B11_mean": 1800.0, "B11_min": 1000.0, "B11_max": 2600.0
+    },
+    "calibration_covariance": {
+      "c_0_0": 181440000.0, "c_0_1": -100800000.0, "c_0_2": 40320000.0,
+      "c_1_1": 987840000.0, "c_1_2": 60480000.0, "c_2_2": 322560000.0
+    }
+  }
+}
