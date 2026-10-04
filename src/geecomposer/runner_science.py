@@ -67,6 +67,22 @@ def _snapshot(recipe, region, start, end, saved=None):
     )
 
 
+EXPORT_NODATA = -9999
+
+
+def export_encoded(product):
+    """The runner's final export encoding (internal; applied after all science).
+
+    Masked cells of each band, inside or outside the product's own footprint
+    (sameFootprint=False), get the finite EXPORT_NODATA sentinel that the export
+    also declares as noData; the native constructor's reprojection and clip to
+    the requested region are applied afterwards and unchanged. Valid pixels,
+    including zero and any non-finite value at a valid pixel, are not altered.
+    Every band is double.
+    """
+    return product.unmask(EXPORT_NODATA, False).toDouble()
+
+
 def config_fingerprint(config):
     serializable = dict(config)
     expression = serializable.get("expression")
@@ -160,7 +176,7 @@ def _prepare(recipe, prefix, budget, previous, step):
         dataset=recipe["dataset"],
         workflow=workflow,
         dtype="float64",
-        nodata=-9999,
+        nodata=EXPORT_NODATA,
     )
     if workflow == "seasonal_nirv":
         step[0] = "calibration"
@@ -281,8 +297,9 @@ def _prepare(recipe, prefix, budget, previous, step):
     destination = recipe["destination"]
     for name, product in products:
         budget.timeout()
-        # One explicit double type for every band (Rao value/count/coverage).
-        image = product.toDouble()
+        # Final boundary: explicit -9999 encoding of masked cells, double bands
+        # (Rao value/count/coverage). The public helpers stay metadata-only.
+        image = export_encoded(product)
         if "drive_folder" in destination:
             # Drive has no object prefix: prefix is a unique run file-name base.
             task = export_to_drive(
@@ -294,7 +311,7 @@ def _prepare(recipe, prefix, budget, previous, step):
                 max_pixels=cap,
                 crs=grid.crs,
                 crs_transform=grid.transform,
-                no_data=-9999,
+                no_data=EXPORT_NODATA,
             )
         else:
             task = export_to_gcs(
@@ -306,7 +323,7 @@ def _prepare(recipe, prefix, budget, previous, step):
                 max_pixels=cap,
                 crs=grid.crs,
                 crs_transform=grid.transform,
-                no_data=-9999,
+                no_data=EXPORT_NODATA,
                 cloud_optimized=True,
             )
         # Match native Task.start's explicit default and bind it in the fingerprint.

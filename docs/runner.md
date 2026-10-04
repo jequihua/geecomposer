@@ -240,9 +240,17 @@ closed if the project, recipe, run binding, prepared configuration or
 scientific provenance changed.
 
 **Drive outputs.** Each product becomes one native unstarted Drive task built by
-`export_to_drive()` with the recipe's exact CRS/affine grid, every band
-converted to double (so Rao value/count/coverage share one type), `-9999`
-GeoTIFF nodata metadata and no unmasking. Files are named
+`export_to_drive()` with the recipe's exact CRS/affine grid and `-9999`
+GeoTIFF nodata metadata. Before the task is built, after all compositing,
+transformation and Rao computation, the runner encodes the export explicitly:
+every band's masked cells become `-9999` (`Image.unmask(-9999,
+sameFootprint=False)`) and every band is converted to double (so Rao
+value/count/coverage share one type). Valid pixels, including zero, are
+unchanged; a non-finite value at a valid pixel is not replaced, so it remains
+detectable. The native constructor then applies its usual reprojection and clip
+to the requested region. GCS runner tasks use the same encoding. The public
+`export_to_drive()`/`export_to_gcs()` helpers themselves stay metadata-only and
+never unmask. Files are named
 `RUN_ID-RANDOM_PRODUCT` in the named folder; Earth Engine may add `-row-col`
 tile suffixes. The folder is a name: Earth Engine uses an existing folder of
 that name anywhere in your Drive (the most recently modified if several exist)
