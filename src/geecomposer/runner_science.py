@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 
 import ee
@@ -71,16 +72,48 @@ EXPORT_NODATA = -9999
 
 
 def export_encoded(product):
-    """The runner's final export encoding (internal; applied after all science).
+    """The runner's export encoding (internal; applied after science and AOI selection).
 
     Masked cells of each band, inside or outside the product's own footprint
     (sameFootprint=False), get the finite EXPORT_NODATA sentinel that the export
-    also declares as noData; the native constructor's reprojection and clip to
-    the requested region are applied afterwards and unchanged. Valid pixels,
-    including zero and any non-finite value at a valid pixel, are not altered.
-    Every band is double.
+    also declares as noData. Valid pixels, including zero and any non-finite
+    value at a valid pixel, are not altered. Every band is double.
     """
     return product.unmask(EXPORT_NODATA, False).toDouble()
+
+
+def export_window(bounds):
+    """Grid-aligned window of AOI bounds already in grid-pixel coordinates
+    (min col, min row, max col, max row): floor/ceil, so every cell the AOI
+    touches is kept. Offsets of its first column/row and its size."""
+    col, row = math.floor(bounds[0]), math.floor(bounds[1])
+    return dict(
+        col_off=col,
+        row_off=row,
+        width=math.ceil(bounds[2]) - col,
+        height=math.ceil(bounds[3]) - row,
+    )
+
+
+def export_request(product, region, grid, window):
+    """Final export image and the region for the native constructor.
+
+    The constructor reprojects and then clips to its region, so the AOI selection
+    happens first and the sentinel fill follows it; the constructor's region is the
+    exact grid-pixel rectangle of the window, which bounds the otherwise unbounded
+    fill without masking any cell inside the window.
+    """
+    rectangle = ee.Geometry.Rectangle(
+        [
+            window["col_off"],
+            window["row_off"],
+            window["col_off"] + window["width"],
+            window["row_off"] + window["height"],
+        ],
+        proj=grid.projection(),
+        geodesic=False,
+    )
+    return export_encoded(product.clip(region)), rectangle
 
 
 def config_fingerprint(config):
@@ -122,9 +155,10 @@ def _prepare(recipe, prefix, budget, previous, step):
     step[0] = "bounds"
     grid = RaoGrid(**recipe["grid"])
     region = ee.Geometry(recipe["aoi"], proj="EPSG:4326", geodesic=False)
-    # EE computes the enclosing rectangle in the requested CRS, including curved
-    # projected edges. Local affine inversion yields a conservative pixel bound.
-    coordinates = region.bounds(maxError=0.01, proj=ee.Projection(grid.crs)).coordinates().getInfo()
+    # EE computes the AOI's enclosing rectangle directly in the grid's full affine
+    # projection (CRS plus transform), so its coordinates are grid-pixel columns
+    # and rows, including curved projected edges, shear and rotation.
+    coordinates = region.bounds(maxError=0.01, proj=grid.projection()).coordinates().getInfo()
     require(
         type(coordinates) is list and len(coordinates) == 1 and len(coordinates[0]) <= 10,
         "unusable projected AOI bound",
@@ -133,15 +167,21 @@ def _prepare(recipe, prefix, budget, previous, step):
     points = coordinates[0]
     require(len(points) >= 4, "unusable projected AOI bound", "uncertain")
     try:
+        if not all(math.isfinite(v) for x in points for v in (x[0], x[1])):
+            raise ValueError("non-finite bound")
         bounds = (
             min(x[0] for x in points),
             min(x[1] for x in points),
             max(x[0] for x in points),
             max(x[1] for x in points),
         )
-        pixels = pixel_bound(bounds, grid.transform)
+        window = export_window(bounds)
+        # The existing conservative bound (two extra cells per side) on these
+        # pixel coordinates; the identity affine leaves them as they are.
+        pixels = pixel_bound(bounds, (1, 0, 0, 0, 1, 0))
     except (TypeError, ValueError, OverflowError, IndexError):
         raise RunnerError("uncertain", "cannot establish output pixel bound") from None
+    require(window["width"] > 0 and window["height"] > 0, "unusable projected AOI bound", "uncertain")
     cap = recipe["limits"]["pixels"]
     workflow = recipe["workflow"]
     if workflow == "seasonal_nirv" or recipe.get("rao", {}).get("normalization") == "gn":
@@ -172,6 +212,7 @@ def _prepare(recipe, prefix, budget, previous, step):
     provenance = dict(
         sources=sources,
         pixels_upper_bound=pixels,
+        export_window=window,
         grid=recipe["grid"],
         dataset=recipe["dataset"],
         workflow=workflow,
@@ -297,16 +338,17 @@ def _prepare(recipe, prefix, budget, previous, step):
     destination = recipe["destination"]
     for name, product in products:
         budget.timeout()
-        # Final boundary: explicit -9999 encoding of masked cells, double bands
-        # (Rao value/count/coverage). The public helpers stay metadata-only.
-        image = export_encoded(product)
+        # Final boundary: AOI selection, then explicit -9999 encoding of masked
+        # cells and double bands (Rao value/count/coverage), bounded by the aligned
+        # export window. The public helpers stay metadata-only.
+        image, bounded = export_request(product, region, grid, window)
         if "drive_folder" in destination:
             # Drive has no object prefix: prefix is a unique run file-name base.
             task = export_to_drive(
                 image,
                 name,
                 destination["drive_folder"],
-                region,
+                bounded,
                 file_name_prefix=f"{prefix}_{name}",
                 max_pixels=cap,
                 crs=grid.crs,
@@ -318,7 +360,7 @@ def _prepare(recipe, prefix, budget, previous, step):
                 image,
                 name,
                 destination["bucket"],
-                region,
+                bounded,
                 file_name_prefix=f"{prefix}/{name}/image",
                 max_pixels=cap,
                 crs=grid.crs,

@@ -1,7 +1,7 @@
 {
   "label": "SYNTHETIC deterministic Earth Engine responses for the public personal Rao GN recipe; not observed service output",
   "steps": {
-    "bounds": [[[571660, 5538000], [572380, 5538000], [572380, 5539120], [571660, 5539120], [571660, 5538000]]],
+    "bounds": [[[0, 0], [36, 0], [36, 56], [0, 56], [0, 0]]],
     "scene_count": 2,
     "scene_ids": ["20240603T102021_20240603T102021_T32UNA", "20240613T102021_20240613T102021_T32UNA"],
     "calibration_count": 2016,

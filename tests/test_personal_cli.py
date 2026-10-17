@@ -784,8 +784,14 @@ def expression_chain(config, recipe):
     assert json.loads(projected.args["crsTransform"].serialize()) == json.loads(
         ee.List(grid["transform"]).serialize()
     )
+    # M004-S19: the AOI selection precedes the fill; the constructor clips to the window rectangle
     region = ee.Geometry(recipe["aoi"], proj="EPSG:4326", geodesic=False)
-    assert clipped.args["geometry"].serialize() == region.serialize()
+    filled = doubled.args["value"]
+    assert filled.func.getSignature()["name"] == "Image.unmask"
+    selected = filled.args["input"]
+    assert selected.func.getSignature()["name"] == "Image.clip"
+    assert selected.args["geometry"].serialize() == region.serialize()
+    assert '"GeometryConstructors.Rectangle"' in clipped.args["geometry"].serialize()
     return doubled.args["value"].serialize()
 
 

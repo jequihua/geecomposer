@@ -242,13 +242,19 @@ scientific provenance changed.
 **Drive outputs.** Each product becomes one native unstarted Drive task built by
 `export_to_drive()` with the recipe's exact CRS/affine grid and `-9999`
 GeoTIFF nodata metadata. Before the task is built, after all compositing,
-transformation and Rao computation, the runner encodes the export explicitly:
-every band's masked cells become `-9999` (`Image.unmask(-9999,
+transformation and Rao computation, the runner selects the AOI (`Image.clip`)
+and then encodes the export explicitly: every band's masked cells, including
+cells outside the AOI, become `-9999` (`Image.unmask(-9999,
 sameFootprint=False)`) and every band is converted to double (so Rao
-value/count/coverage share one type). Valid pixels, including zero, are
-unchanged; a non-finite value at a valid pixel is not replaced, so it remains
-detectable. The native constructor then applies its usual reprojection and clip
-to the requested region. GCS runner tasks use the same encoding. The public
+value/count/coverage share one type). Valid pixels, including zero and
+fractional-mask pixels, are unchanged; a non-finite value at a valid pixel is
+not replaced, so it remains detectable. The native constructor then applies its
+usual reprojection and clip, here to the export window: the grid-aligned pixel
+rectangle enclosing the AOI in the grid's own pixel coordinates. The single
+bounds query asks Earth Engine for the AOI's box in the full affine grid, so
+shear and rotation are included. That clip bounds the otherwise
+unbounded fill without masking any window cell. GCS runner tasks use the same
+boundary. The public
 `export_to_drive()`/`export_to_gcs()` helpers themselves stay metadata-only and
 never unmask. Files are named
 `RUN_ID-RANDOM_PRODUCT` in the named folder; Earth Engine may add `-row-col`
@@ -464,7 +470,7 @@ prove continued retention against later external deletion; production qualificat
 still needs the prescribed exported-raster audit.
 
 The private control record is also the manifest, at most 1 MiB. It retains method
-parameters via canonical recipe, grid, float64 dtype/nodata -9999, source scene
+parameters via canonical recipe, grid, export window, float64 dtype/nodata -9999, source scene
 IDs, GN models/fingerprints, seasonal coverage/summary data, tasks/operations,
 bounded status categories and actual object names/generations/sizes/checksums.
 Oversized provenance fails before export rather than truncating evidence. Every

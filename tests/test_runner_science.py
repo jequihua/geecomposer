@@ -13,7 +13,9 @@ from runner_fakes import Clock, recipe_value
 pytestmark = pytest.mark.usefixtures("runner_offline")
 
 
-BOUNDS = [[[0, 0], [0.001, 0], [0.001, 0.001], [0, 0.001], [0, 0]]]
+# The bounds response is in the grid's full affine (pixel) coordinates: recipe_value's
+# AOI spans columns and rows 0..10 of its grid.
+BOUNDS = [[[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]]]
 
 
 def evaluation(monkeypatch, values):
