@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "workflow": "coarse",
+  "start": "2025-01-01",
+  "end": "2026-01-01",
+  "destination": {
+    "drive_folder": "geecomposer_coarse"
+  },
+  "dataset": "sentinel2",
+  "aoi": {
+    "type": "Polygon",
+    "coordinates": [
+      [
+        [
+          -90.0,
+          19.0
+        ],
+        [
+          -87.2,
+          19.0
+        ],
+        [
+          -87.2,
+          21.5
+        ],
+        [
+          -90.0,
+          21.5
+        ],
+        [
+          -90.0,
+          19.0
+        ]
+      ]
+    ]
+  },
+  "bands": [
+    "B2",
+    "B3",
+    "B4",
+    "B8"
+  ],
+  "mask": "s2_cloud_score_plus",
+  "coarse": {
+    "resolution": 1000,
+    "crs": "MX-AEA",
+    "spatial": "mean",
+    "coverage_min": 0.5,
+    "temporal": [
+      "median"
+    ],
+    "periods": "monthly",
+    "product": "rao",
+    "rao": {
+      "fit": {
+        "start": "2025-01-01",
+        "end": "2026-01-01"
+      }
+    }
+  }
+}

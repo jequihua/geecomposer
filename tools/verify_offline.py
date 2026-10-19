@@ -33,6 +33,20 @@ ee.data.get_persistent_credentials = deny
 FIFO_TEST = "tests/test_personal_cli.py::test_posix_fifo_records_never_block"
 FIFO_REASON = "POSIX FIFOs are unsupported on this platform"
 
+# The exact public example inventory checked by the installed-wheel smoke: twelve
+# recipes (the policy example excluded), three personal and the three coarse ones.
+INVENTORY = """
+recipes = sorted((root / "examples/recipes").glob("*.json"))
+recipes = [p for p in recipes if p.name != "policy.local.example.json"]
+assert len(recipes) == 12
+assert sum(p.name.startswith("personal_") for p in recipes) == 3
+assert sorted(p.name for p in recipes if p.name.startswith("coarse_")) == [
+    "coarse_rao_monthly_2025.json",
+    "coarse_s1_monthly_2025.json",
+    "coarse_s2_monthly_2025.json",
+]
+"""
+
 
 def fifo_unsupported():
     return os.name == "nt" and not hasattr(os, "mkfifo")
@@ -247,10 +261,10 @@ assert Path(geecomposer.__file__).resolve().is_relative_to(installed)
 assert not ee.data.is_initialized()
 entry = installed / "bin" / ("geecomposer.exe" if sys.platform == "win32" else "geecomposer")
 assert entry.is_file()
-recipes = sorted((root / "examples/recipes").glob("*.json"))
-recipes = [p for p in recipes if p.name != "policy.local.example.json"]
-assert len(recipes) == 9
-assert sum(p.name.startswith("personal_") for p in recipes) == 3
+"""
+        + INVENTORY
+        + """
+checks = 0
 for args in [["--help"]] + [args for p in recipes for args in
         (["validate", str(p)], ["run", "--recipe", str(p), "--dry-run"])]:
     sys.argv = [str(entry), *args]
@@ -267,11 +281,13 @@ for args in [["--help"]] + [args for p in recipes for args in
         assert value["status"] == ("validated" if args[0] == "validate" else "dry_run")
         if any(Path(a).name.startswith("personal_") for a in args):
             assert set(value["destination"]) == {"drive_folder"}
+        checks += 1
+assert checks == 2 * len(recipes) == 24
 for name, module in tuple(sys.modules.items()):
     if name == "geecomposer" or name.startswith("geecomposer."):
         assert Path(module.__file__).resolve().is_relative_to(installed)
 assert not ee.data.is_initialized()
-print("Installed wheel origins and CLI: help + 18 recipe checks passed")
+print(f"Installed wheel origins and CLI: help + {checks} recipe checks passed")
 """
     )
     print(

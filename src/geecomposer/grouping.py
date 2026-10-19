@@ -1,11 +1,14 @@
 """Grouped composition helpers.
 
-Provides yearly grouping only in v0.1. Monthly, seasonal, and generic
-grouping are deferred to later versions.
+``compose_yearly`` groups the existing composition by calendar year. Named
+periods (``monthly_periods``/``validate_periods``) are the shared half-open UTC
+period core used by ``geecomposer.coarse``; they build no Earth Engine objects.
 """
 
 from __future__ import annotations
 
+from datetime import date
+import re
 from typing import Any, Iterable
 
 import ee
@@ -93,3 +96,71 @@ def _validate_and_normalize_years(
     if len(set(year_list)) != len(year_list):
         raise GeeComposerError("years must not contain duplicates")
     return year_list
+
+
+PERIOD_CEILING = 12
+_LABEL = re.compile(r"[0-9A-Za-z][0-9A-Za-z_-]{0,31}")
+_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def monthly_periods(year: int) -> tuple[tuple[str, str, str], ...]:
+    """Twelve named UTC half-open months ``(label, start, end)``; the last ends on
+    1 January of the next year. Labels are ``YYYY-MM`` in chronological order."""
+    if isinstance(year, bool) or not isinstance(year, int) or not 1 <= year <= 9998:
+        raise GeeComposerError("year must be an integer between 1 and 9998")
+    months = []
+    for month in range(1, 13):
+        start = date(year, month, 1)
+        end = date(year + month // 12, month % 12 + 1, 1)
+        months.append((f"{year:04d}-{month:02d}", start.isoformat(), end.isoformat()))
+    return tuple(months)
+
+
+def validate_periods(periods: Iterable[Any]) -> tuple[tuple[str, str, str], ...]:
+    """Validate named periods and return them as an immutable tuple.
+
+    Each period is ``(label, start, end)`` with ISO ``YYYY-MM-DD`` dates meaning
+    00:00 UTC and the half-open interval ``[start, end)``. Periods must be unique,
+    strictly increasing and non-overlapping (gaps allowed), 1..12 per call.
+    Failures raise ``GeeComposerError`` naming one code: ``empty_list``,
+    ``too_many``, ``bad_label``, ``invalid_date``, ``empty_interval``,
+    ``duplicate_label``, ``unsorted`` or ``overlap``.
+    """
+    if isinstance(periods, (str, bytes)) or not hasattr(periods, "__iter__"):
+        raise GeeComposerError("invalid periods: empty_list")
+    items = list(periods)
+    if not items:
+        raise GeeComposerError("invalid periods: empty_list")
+    if len(items) > PERIOD_CEILING:
+        raise GeeComposerError("invalid periods: too_many")
+    result, labels, previous = [], set(), None
+    for item in items:
+        if not isinstance(item, (tuple, list)) or len(item) != 3:
+            raise GeeComposerError("invalid periods: bad_label")
+        label, start, end = item
+        if not isinstance(label, str) or not _LABEL.fullmatch(label):
+            raise GeeComposerError("invalid periods: bad_label")
+        first, last = _iso_date(start), _iso_date(end)
+        if first is None or last is None:
+            raise GeeComposerError("invalid periods: invalid_date")
+        if first >= last:
+            raise GeeComposerError("invalid periods: empty_interval")
+        if label in labels:
+            raise GeeComposerError("invalid periods: duplicate_label")
+        if previous and first < previous[0]:
+            raise GeeComposerError("invalid periods: unsorted")
+        if previous and first < previous[1]:
+            raise GeeComposerError("invalid periods: overlap")
+        labels.add(label)
+        previous = (first, last)
+        result.append((label, start, end))
+    return tuple(result)
+
+
+def _iso_date(value):
+    if not isinstance(value, str) or not _ISO_DATE.fullmatch(value):
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None

@@ -22,7 +22,7 @@ from google.oauth2.credentials import Credentials
 import google_auth_httplib2
 
 from .recipe import CEILINGS, RunnerError, canonical, parse_json, require, validate_recipe
-from .runner import Runner, public_error, run_id
+from .runner import Runner, public_error, run_id, task_view
 from .runner_cloud import MAX_STATE, EarthEngine, EETransport
 
 MAX_CREDENTIAL = 65_536
@@ -81,8 +81,8 @@ def settings(project):
     )
 
 
-def validate(recipe):
-    recipe = validate_recipe(recipe)
+def validate(recipe, *, admission=True):
+    recipe = validate_recipe(recipe, admission=admission)
     require(
         "drive_folder" in recipe["destination"],
         "personal runs export to a Drive folder; GCS runs need institutional policy",
@@ -346,7 +346,8 @@ def public_status(state, verified=None, persisted=True):
         project=state["project"],
         destination=dict(drive_folder=folder),
         tasks=[
-            dict(
+            task_view(
+                t,
                 name=t["name"],
                 state=t["state"],
                 request_id=t["request_id"],
@@ -371,8 +372,8 @@ def public_status(state, verified=None, persisted=True):
 class PersonalRunner(Runner):
     """The institutional state machine with Drive-specific reservation/completion."""
 
-    def _validate(self, recipe):
-        return validate(recipe)
+    def _validate(self, recipe, admission=True):
+        return validate(recipe, admission=admission)
 
     def _reservation(self, recipe, identifier):
         return dict(mode="personal", prefix=f"{identifier}-{uuid.uuid4().hex}")

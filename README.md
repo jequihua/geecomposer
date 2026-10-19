@@ -38,6 +38,12 @@ Recent milestones added these workflow improvements:
   mean/count products
 - official notebooks and runnable example scripts for Sentinel-2, Sentinel-1,
   and Rao workflows
+- coarse-first S1/S2/coarse-Rao products on six resolutions, including the fixed
+  national MX-AEA grid (`geecomposer.coarse`). They are also available as
+  `"workflow": "coarse"` recipes, with monthly periods, tile cores, a shared
+  snapshot and model, and credential-free dry-runs (`docs/runner.md`,
+  `docs/coarse.md`). The recipe output ceiling is now 12 tasks. These products
+  are offline-tested only: no live run or national export has been made.
 
 The deterministic test suite verifies call patterns, pipeline behavior, and
 Rao arithmetic against independent numerical calculations. Live Earth Engine

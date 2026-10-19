@@ -100,7 +100,7 @@ def test_strict_json_rejections(data):
         (("limits",), {"pixels": True}),
         (("limits",), {"window": 8}),
         (("limits",), {"active_exports": 3}),
-        (("limits",), {"outputs": 11}),
+        (("limits",), {"outputs": 13}),  # D126/A17: the ceiling is 12
         (("limits",), {"calibration_pixels": 1000001}),
         (("limits",), {"unknown": 1}),
         (("preprocess",), "gamma_map"),

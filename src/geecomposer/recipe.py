@@ -22,7 +22,7 @@ CEILINGS = dict(
     vertices=10_000,
     bands=12,
     window=7,
-    outputs=10,
+    outputs=12,
     pixels=10_000_000,
     scenes=1000,
     calibration_pixels=1_000_000,
@@ -328,11 +328,12 @@ def pixel_bound(bounds, transform):
     return widths[0] * widths[1]
 
 
-def validate_recipe(value, policy=None):
+def validate_recipe(value, policy=None, *, admission=True):
     fields(
         value,
-        ("version", "workflow", "dataset", "aoi", "grid", "destination", "bands"),
+        ("version", "workflow", "dataset", "aoi", "destination", "bands"),
         (
+            "grid",
             "start",
             "end",
             "years",
@@ -343,11 +344,16 @@ def validate_recipe(value, policy=None):
             "filters",
             "rao",
             "seasonal",
+            "coarse",
             "limits",
         ),
     )
     integer(value["version"], 1, 1)
-    workflow = choice(value["workflow"], ("composite", "yearly", "rao", "seasonal_nirv"))
+    workflow = choice(value["workflow"], ("composite", "yearly", "rao", "seasonal_nirv", "coarse"))
+    # The coarse workflow resolves its grid from its own section; every other
+    # workflow keeps the required explicit export grid.
+    require(workflow == "coarse" or "grid" in value, "required field missing")
+    require((workflow == "coarse") == ("coarse" in value), "coarse options require the coarse workflow")
     dataset = choice(value["dataset"], ("sentinel2", "sentinel1", "sentinel1_float"))
     budget = limits(value.get("limits", {}), policy["limits"] if policy else CEILINGS)
     require(
@@ -355,7 +361,8 @@ def validate_recipe(value, policy=None):
         "canonical recipe byte limit exceeded",
     )
     bounds = validate_aoi(value["aoi"], budget["vertices"])
-    validate_grid(value["grid"])
+    if workflow != "coarse":
+        validate_grid(value["grid"])
     # Institutional policy admits only allowlisted GCS locations.
     (location if policy else destination)(value["destination"])
     if policy:
@@ -477,6 +484,13 @@ def validate_recipe(value, policy=None):
         require(window % 2 == 1, "window must be odd")
     if science.get("decimal_places") is not None:
         integer(science["decimal_places"], 0, 9)
+    if workflow == "coarse":
+        from .runner_coarse import validate as coarse_validate
+
+        # admission=False only inspects or stops a trusted stored record; it skips
+        # exactly the coarse execution-admission predicates (runner_coarse.validate).
+        coarse_validate(value, budget, admission)
+        return dict(value, limits=budget)
     pixels = (
         pixel_bound(bounds, value["grid"]["transform"])
         if value["grid"]["crs"] == "EPSG:4326"
@@ -490,6 +504,10 @@ def validate_recipe(value, policy=None):
 
 
 def estimate(recipe):
+    if recipe["workflow"] == "coarse":
+        from .runner_coarse import estimate as coarse_estimate
+
+        return coarse_estimate(recipe)
     budget = recipe["limits"]
     bounds = shape(recipe["aoi"]).bounds
     pixels = (

@@ -61,8 +61,8 @@ The runner never clips selected scenes or changes this setting automatically.
 
 ## Recipe shape
 
-See the nine small [example JSON files](../examples/recipes/): six GCS
-recipes and three `personal_*_drive.json` recipes. Examples contain
+See the twelve small [example JSON files](../examples/recipes/): six GCS
+recipes, three `personal_*_drive.json` recipes and three `coarse_*` recipes. Examples contain
 illustrative resources, not production defaults. Every object rejects unknown
 fields. All JSON keys must be unique; booleans are not numbers. NaN, infinities,
 overflowing numbers, malformed dates, duplicate bands/years, invalid polygon
@@ -71,14 +71,14 @@ topology, open rings, arbitrary URLs/paths, expressions, code and asset IDs fail
 | Field | Contract |
 | --- | --- |
 | `version` | Integer `1`. |
-| `workflow` | `composite`, `yearly`, `rao`, `seasonal_nirv`. |
+| `workflow` | `composite`, `yearly`, `rao`, `seasonal_nirv`, `coarse` (see below). |
 | `dataset` | `sentinel2`, `sentinel1` (dB), `sentinel1_float` (linear). |
 | `aoi` | Inline 2D GeoJSON Polygon/MultiPolygon, WGS84 lon/lat. No Feature wrappers, vector-driver paths or references. Latitudes within -85..85; antimeridian-crossing rings are rejected. Holes must be valid. Edges use `geodesic=False`. |
-| `grid` | `{crs, transform}`; six finite invertible affine coefficients. CRS is EPSG:4326, EPSG:3857, or EPSG:32601..32660/32701..32760. Other CRS definitions are rejected rather than interpreted. |
+| `grid` | Required except for `coarse`. `{crs, transform}`; six finite invertible affine coefficients. CRS is EPSG:4326, EPSG:3857, or EPSG:32601..32660/32701..32760. Other CRS definitions are rejected rather than interpreted. |
 | `destination` | Exactly one shape. GCS: `{bucket, prefix}`, bare lowercase bucket from the administrator allowlist, relative slash-separated prefix; version 1 admits simple hyphenated bucket names, no dotted buckets. Drive (personal mode only): `{drive_folder}`, a folder name of 1-100 letters, digits, `_`, `-` or `.` starting with a letter or digit; no separators, IDs or URLs are interpreted. Mixed or unknown keys fail. |
 | `bands` | 1..12 distinct actual Sentinel bands, not regex selectors. S2: B1..B9 including B8A, B11/B12; S1: VV/VH/HH/HV/angle. |
 | `start`, `end` | Real `YYYY-MM-DD` dates, half-open interval. Required except for yearly. |
-| `years` | Yearly only; 1..10 distinct integers 1..9998, replacing dates. |
+| `years` | Yearly only; 1..12 distinct integers 1..9998 (the output ceiling), replacing dates. |
 | `reducer` | Optional existing median (default), mean, min, max, mosaic or count. |
 | `transform` | Optional identity (default), ndvi, nirv, vh_vv_ratio. Indices need B4/B8; ratio requires linear VV/VH. NIRv uses S2's explicit 0.0001 reflectance factor. No caller expression strings. |
 | `mask` | Optional `s2_cloud_score_plus`, only for S2 ordinary composites/Rao. |
@@ -94,7 +94,7 @@ uses the existing per-observation public workflow: WorldCover v200, SCL 4/5,
 strict support, exact 0.90 quantile with strict `>`, and default normalization
 and rounding. It exports mean and observation-count rasters, optionally every
 selected scene raster. All scene summaries/site estimate/calibration identities
-are stored privately. More than 10 requested exports fails before submission;
+are stored privately. More than 12 requested exports fails before submission;
 there is no first-N selection. The seasonal example explicitly requests only
 mean/count exports. Use an appropriate aligned 20 m grid for the combined
 protocol; the runner never silently changes the requested grid.
@@ -107,6 +107,144 @@ calls the existing compose/compose_yearly/rao_q/fit_normalization/seasonal APIs.
 their metadata `explicit_snapshot`. No scientific algorithms or defaults changed.
 Resume reuses saved source IDs and checks the rebuilt native config/provenance
 fingerprints. It fails closed on changed calibration or graph configuration.
+
+## Coarse-first recipes (`workflow: "coarse"`)
+
+`"workflow": "coarse"` runs the coarse-first products of `geecomposer.coarse`
+through the normal recipe and CLI path, one product per run:
+
+- Sentinel-1 linear power;
+- Sentinel-2 reflectance;
+- coarse GN Rao.
+
+Three monthly 2025 examples on a 1 km grid are provided:
+`coarse_s1_monthly_2025.json`, `coarse_s2_monthly_2025.json` and
+`coarse_rao_monthly_2025.json`. The S1 and S2 examples use an illustrative
+national-span outline plus a Pacific island piece; it is not an official
+boundary.
+
+**Top-level fields.**
+
+| Field | Contract |
+| --- | --- |
+| `dataset` | `sentinel2` (bands a unique subset of B2/B3/B4/B8, `mask: "s2_cloud_score_plus"` required) or `sentinel1_float` (VV/VH; `filters` with instrumentMode IW, an explicit `orbitPass`, polarizations VV and VH; no Gamma MAP). |
+| `start`, `end` | The run interval, half-open. |
+| `grid` | Optional. If present it must equal the resolved coarse grid, for example `{"crs": "MX-AEA", "transform": [1000, 0, 0, 0, -1000, 0]}`; anything else is a contradictory-grid error. A coarser export scale never replaces per-observation aggregation. |
+| `reducer`, `transform`, `preprocess`, `rao`, `seasonal`, `years` | Rejected; the `coarse` section owns these choices. |
+
+**The `coarse` section.** Every key is validated and unknown keys are
+rejected.
+
+| Key | Contract |
+| --- | --- |
+| `resolution` | Required: 100, 250, 500, 1000, 5000 or 10000 m. |
+| `crs` | `"MX-AEA"` (default; the fixed national Albers grid with a 10 km origin) or a local northern UTM zone `"EPSG:326zz"`. It resolves to exactly the WKT, affine and origin of `coarse.grid`. |
+| `spatial` | `"mean"`, the only spatial statistic. |
+| `coverage_min` | In (0, 1]; default 0.5. Applied once, after the last spatial stage. |
+| `temporal` | A unique subset of mean, median, sd_pop, min, max and range; default `["median"]`. Equal weight per observation, after the spatial mean. |
+| `index` | `"ndvi"` (S2), computed from the mean or median composite. |
+| `db` | Boolean (S1). Adds dB bands for mean, median, min and max. |
+| `periods` | `"monthly"` (the run must be one calendar year), a list of up to 12 `{label, start, end}` inside the run, or absent (one period, the whole run). |
+| `tiles` | `{columns, rows, cores}`: the aligned export window split into `columns × rows` integer cores (each 1..12), optionally only the listed `[row, col]` cores. Default one core. |
+| `product` | `"composite"` (default) or `"rao"`. |
+| `rao` | Rao only. Either `{"model": {...}}`, an inline frozen four-feature `RaoNormalization` whose band order the recipe's `bands` must follow, or `{"fit": {start, end}}`, one reference median fit inside the run. |
+| `snapshot` | Optional. An inline completed snapshot, as stored in a previous run's private record, so that runs exporting different cores share the same sources. Its member images count against the effective `scenes` ceiling. |
+
+**Limits.**
+
+- **Final bands.** At most 32. Rao always exports eight: value, valid count,
+  coverage, `obs__t_count` and the four features.
+- **Output ceiling.** Declared periods × selected cores must fit the effective
+  `outputs` ceiling (12, or lower by policy or recipe). This is checked before
+  any credential or remote access; an empty period cannot make an oversized
+  declaration admissible.
+- **Scene ceiling.** Every snapshot fits the effective `scenes` ceiling
+  (1,000, or lower by policy or recipe), counting its member images. This
+  covers fresh reads, an inline `snapshot` and a persisted snapshot on resume.
+  An oversized inline snapshot fails validation; an oversized persisted one
+  stops the resume (`conflict`) before calibration or tasks. Nothing is
+  truncated.
+- **Window ceiling.** Coarse Rao always uses its fixed 3 × 3 neighbourhood, so
+  its effective `window` ceiling must be at least 3. A lower recipe or policy
+  ceiling fails validation for both the fit and the supplied-model paths.
+  Composites are unaffected.
+- **Records made before these checks.** A run recorded before the scene and
+  window ceilings were enforced can still be inspected and stopped. That covers
+  an inline `snapshot` above its `scenes` ceiling, or coarse Rao with a
+  `window` ceiling below 3.
+  - `status` reads the trusted record.
+  - `cancel` persists a stop request. After the worker's lease, it confirms
+    and cancels only the recorded operations.
+  - Its work stays inadmissible: `resume`, `run`, `validate` and
+    `run --dry-run` refuse it, and nothing is prepared or submitted.
+  - Every other record check still applies: policy, content and source
+    binding, recipe and snapshot structure, reserved prefix, task markers and
+    operation confirmation.
+- **More than 12 outputs.** A national 500 m monthly product with several
+  cores needs an explicit replan: separate runs for different `cores`, sharing
+  one inline `snapshot` and `model`. Nothing is batched automatically and no
+  coverage is reduced silently.
+
+**Execution order.**
+
+1. **Metadata.** The run reads Earth Engine metadata once, through the bounded
+   runner transport and within the run deadline:
+   - the AOI bounds in the grid;
+   - candidate rows (C1) over the run interval and coarse-cell union;
+   - completion rows (C2) by acquisition key, without dates;
+   - for Sentinel-2, Cloud Score+ rows for the members.
+
+   For every contributing band it captures the native CRS, affine and
+   `dimensions`. Any response pixel `origin` is folded into the affine.
+   Missing or contradictory metadata, overflow of the 1000-row read, more than
+   600 keys or 400 acquisitions in a period, and unsupported native grids all
+   fail clearly. Nothing is truncated or fetched again later.
+2. **Persistence.** The validated snapshot (members, projections, dimensions,
+   scope and fingerprint) and any model are persisted in the private run record
+   before any export intent. Resume rebuilds and revalidates them without new
+   metadata reads or a refit, and a changed record refuses before submission.
+3. **Calibration.** A reference fit runs once, before the period loop. It must
+   fit the 1,000,000-cell calibration ceiling, which is separate from the
+   10,000,000-pixel output ceiling. Its intent is recorded first: a fit that was
+   interrupted before its model was persisted fails the run (`uncertain`)
+   instead of refitting. Start a new run to fit again.
+4. **Science.** Each period is built once on the full coarse-cell union with
+   the shared snapshot and model.
+5. **Tasks.** Each selected core gets one unstarted task, using the existing
+   -9999/double encoding and exact core rectangle. The raw AOI polygon never
+   truncates coarse cells.
+   - A period without acquisitions is recorded as `empty` and gets no task.
+   - If every period is empty, the run is `no_data`.
+
+**Dry-run.** `validate` and `run --dry-run` are credential-free. The report
+labels each item:
+
+- **Known:** periods, task names and their upper bound, cores, grid, stage
+  chain with first and nested contributor bounds, final bands and units,
+  coverage, and Rao's 3X support.
+- **Conservative bounds:** the national window, and the maxPixels values,
+  which hold only under the per-source domain conditions.
+- **Unknown:** scene counts, empty periods, EECU-seconds and runtime.
+
+Output pixels are not compute cost, and twelve tasks are not promised to finish
+within the deadline.
+
+**Task telemetry.** Each status poll can update a task's
+`{"attempt", "batch_eecu_usage_seconds"}`:
+
+- The attempt is tracked separately from the measurement. A newer attempt
+  replaces the current value. If it carries no valid EECU value, its usage is
+  `null` (unknown), never the earlier attempt's value or zero.
+- An older attempt never replaces it, nor does a response without a valid
+  attempt number once one is known. This holds after the state is reloaded.
+- Polls of the same attempt replace a valid value and are never summed. A
+  poll without a valid value keeps that attempt's last valid one.
+- Valid values are finite and nonnegative, including zero.
+- Telemetry never affects task identity, success or limits. It is shown per
+  task only when present.
+
+Project-level EECU reconciliation, waiting time and Drive/GCS costs are not
+measured here.
 
 ## Policy, identity and hosted packaging
 
@@ -340,7 +478,8 @@ permission check or IAM change is authorized by this document.
 ## Resource and request budgets
 
 Hard ceilings are 1 MiB recipe; 10,000 vertices; 12 input dimensions; odd windows
-through 7; 10 outputs; 10 million pixels/output; 1,000 source scenes across the
+through 7; 12 outputs (D126/A17; records created under the former 10-output
+ceiling keep it); 10 million pixels/output; 1,000 source scenes across the
 run; 1 million calibration-grid pixels; 2 active exports; 1,800 seconds application
 time; 3 transient status retries. Policy and recipe can lower these ceilings.
 Policy chooses polling in 15..60 seconds. The application reserves its last 60

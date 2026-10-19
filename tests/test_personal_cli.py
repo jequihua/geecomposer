@@ -461,6 +461,106 @@ def test_cancel_after_crash_is_reconciled_honestly(tmp_path, capsys, point, code
     assert w.engine.submitted == (["request-1"] if point == "submit.after" else [])
 
 
+def test_personal_view_never_shows_an_older_attempt_as_current_after_reload(tmp_path, capsys):
+    """Real local JSON state (S03-F3): attempt 2 without valid EECU stays unknown
+    through reload, offline status and a late attempt-1 response on resume."""
+    w = Personal(tmp_path)
+    w.engine.products = 1
+    w.engine.states = {"request-1": ["RUNNING"]}
+    replies = [
+        {"batch_eecu_usage_seconds": 5.5, "attempt": 1},
+        {"batch_eecu_usage_seconds": float("nan"), "attempt": 2},
+    ]
+    status = w.engine.status
+
+    def reply(request_id, operation=None):
+        result = status(request_id, operation)
+        if replies:
+            result.update(replies.pop(0))
+        return result
+
+    w.engine.status = reply
+    polls = []
+
+    def crash(name):
+        if name == "status.before":
+            polls.append(name)
+            if len(polls) == 3:
+                raise Crash(name)
+
+    w.boundary.hook = crash
+    with pytest.raises(Crash):
+        cli.main(
+            [*w.options(), "run", "--recipe", str(w.recipe()), "--run-id", "eecu"],
+            connector=w.connector,
+            budget_factory=w.clock.budget,
+        )
+    capsys.readouterr()
+    w.boundary.hook = None
+    unknown = {"attempt": 2, "batch_eecu_usage_seconds": None}
+    state, _ = w.record("eecu")
+    assert state["tasks"][0]["telemetry"] == unknown
+    code, shown = w.main(capsys, "status", "--run-id", "eecu")
+    assert code == 10 and shown["tasks"][0]["telemetry"] == unknown
+    w.clock.now += LEASE_SECONDS + 1
+    replies += [
+        {"batch_eecu_usage_seconds": 5.5, "attempt": 1},
+        {"batch_eecu_usage_seconds": 6.25, "attempt": 2},
+    ]
+    w.engine.states = {"request-1": ["RUNNING", "RUNNING", "COMPLETED"]}
+    code, resumed = w.main(capsys, "resume", "--run-id", "eecu")
+    current = {"attempt": 2, "batch_eecu_usage_seconds": 6.25}
+    assert code == 0 and resumed["tasks"][0]["telemetry"] == current
+    assert w.record("eecu")[0]["tasks"][0]["telemetry"] == current
+
+
+@pytest.mark.parametrize("form", ["window", "scenes"])
+def test_personal_former_bypass_record_keeps_status_and_cancel_commands(real_ee, tmp_path, monkeypatch, capsys, form):
+    """S03-F4 through the public personal commands, the existing fake connector and
+    real local JSON state. SYNTHETIC former-bypass record (see test_coarse_runner's
+    as_legacy); no actual old record was inspected."""
+    from geecomposer import runner_coarse
+    from test_coarse_metadata import eight_members, recipe as coarse_recipe
+    from test_coarse_recipe import SUPPLIED_MODEL
+    from test_coarse_runner import as_legacy
+
+    if form == "window":
+        value = coarse_recipe(product="rao", rao={"model": SUPPLIED_MODEL})
+        value["bands"] = ["B8", "B3", "B2", "B4"]
+        lower, refusal = {"window": 1}, "coarse Rao 3x3 support exceeds the window ceiling"
+    else:
+        snapshot = runner_coarse.encode_snapshot(eight_members(monkeypatch))
+        value = json.loads(json.dumps(coarse_recipe(snapshot=snapshot)))
+        lower, refusal = {"scenes": 1}, "coarse snapshot exceeds the scene ceiling"
+    w = Personal(tmp_path)
+    crash_at(w, "status.before")
+    with pytest.raises(Crash):
+        cli.main(
+            [*w.options(), "run", "--recipe", str(w.recipe(value)), "--run-id", "legacy"],
+            connector=w.connector,
+            budget_factory=w.clock.budget,
+        )
+    capsys.readouterr()
+    w.boundary.hook = None
+    state, generation = w.record("legacy")
+    legacy = as_legacy(state, personal.settings(PROJECT), w.engine, **lower)
+    Store(w.state).write("legacy", legacy, generation)
+    active = [t["request_id"] for t in legacy["tasks"] if t.get("operation")]
+    w.engine.states = {r: ["RUNNING"] for r in active}
+    code, shown = w.main(capsys, "status", "--run-id", "legacy")
+    assert (code, shown["status"]) == (10, "running")
+    code, refused = w.main(capsys, "resume", "--run-id", "legacy")
+    assert (code, refused) == (2, {"message": refusal, "status": "validation"})
+    code, stopping = w.main(capsys, "cancel", "--run-id", "legacy")
+    assert (code, stopping["status"]) == (10, "cancelling") and w.engine.cancel_calls == []
+    w.clock.now += LEASE_SECONDS + 1
+    code, done = w.main(capsys, "cancel", "--run-id", "legacy")
+    assert (code, done["status"]) == (8, "cancelled") and sorted(w.engine.cancel_calls) == sorted(active)
+    saved, _ = w.record("legacy")
+    assert w.engine.submitted == active and saved["recipe"] == legacy["recipe"]
+    assert saved["binding"] == legacy["binding"] and saved["stop"] == "cancelled"
+
+
 def test_interrupt_while_polling_cancels_through_fenced_control_flow(tmp_path, capsys):
     w = Personal(tmp_path)
     w.engine.products = 1

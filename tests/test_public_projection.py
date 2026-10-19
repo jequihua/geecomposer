@@ -64,6 +64,42 @@ def test_stage_failure_is_bounded(gate, monkeypatch, tmp_path):
         gate.run([], cwd=tmp_path, env={})
 
 
+def test_installed_smoke_inventory_is_the_exact_shipped_examples(gate):
+    namespace = {"root": gate.ROOT}
+    exec(gate.INVENTORY, namespace)
+    names = [p.name for p in namespace["recipes"]]
+    assert len(names) == 12 and "policy.local.example.json" not in names
+    assert sum(n.startswith("personal_") for n in names) == 3
+    assert [n for n in names if n.startswith("coarse_")] == [
+        "coarse_rao_monthly_2025.json",
+        "coarse_s1_monthly_2025.json",
+        "coarse_s2_monthly_2025.json",
+    ]
+
+
+@pytest.mark.parametrize(
+    "old,new",
+    [
+        ("coarse_s2_monthly_2025.json", None),
+        ("coarse_s2_monthly_2025.json", "coarse_s2_monthly_2024.json"),
+        (None, "extra_recipe.json"),
+        ("personal_sentinel1_drive.json", "sentinel1_drive.json"),
+    ],
+    ids=["missing_coarse", "substituted_coarse", "extra_recipe", "personal_renamed"],
+)
+def test_installed_smoke_inventory_rejects_any_other_set(gate, tmp_path, old, new):
+    """An exact inventory, not a lower bound: a missing, substituted or extra
+    recipe, or a changed personal count, stops the smoke before any CLI check."""
+    names = sorted(p.name for p in (gate.ROOT / "examples" / "recipes").glob("*.json"))
+    names = [n for n in names if n != old] + ([new] if new else [])
+    recipes = tmp_path / "examples" / "recipes"
+    recipes.mkdir(parents=True)
+    for name in names:
+        (recipes / name).write_bytes(b"{}")
+    with pytest.raises(AssertionError):
+        exec(gate.INVENTORY, {"root": tmp_path})
+
+
 def test_public_document_links_and_required_assets(gate):
     root = gate.ROOT
     for name in ("deploy/cloud_run/job.yaml", "examples/rao_gcs_unstarted.py"):

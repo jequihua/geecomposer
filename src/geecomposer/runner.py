@@ -9,15 +9,19 @@ from __future__ import annotations
 
 import base64
 from importlib.metadata import version
+import math
 import re
 import uuid
 
 import ee
 
-from .recipe import EXIT_CODES, RunnerError, digest, require, validate_recipe
+from .recipe import CEILINGS, EXIT_CODES, RunnerError, digest, require, validate_recipe
+from .runner_coarse import MESSAGES as COARSE_MESSAGES
 from .runner_science import PHASES, config_fingerprint, discovery_marker, request_config
 
 LEASE_SECONDS = 120
+# Output ceiling before D126/A17: records bound to it keep it (never upgraded or rebound).
+LEGACY_OUTPUTS = 10
 TERMINAL_EE = {"COMPLETED", "FAILED", "CANCELLED"}
 ACTIVE_EE = {"READY", "RUNNING", "CANCEL_REQUESTED"}
 
@@ -87,7 +91,7 @@ MESSAGES = frozenset(
         "unexpected object in run output inventory", "output listing page limit exceeded",
         "output inventory exceeds bound", "output outside exact run prefix",
     }
-)
+) | COARSE_MESSAGES
 UNKNOWN_ERROR = {"phase": "unknown", "reason": "unrecognized diagnostic"}
 
 
@@ -160,13 +164,62 @@ def binding(recipe, policy, source):
     return digest(dict(recipe=recipe, policy=policy, source=source, package=version("geecomposer")))
 
 
+def _eecu(value):
+    """A finite nonnegative EECU-seconds value (zero included), else None."""
+    return value if type(value) in (int, float) and math.isfinite(value) and value >= 0 else None
+
+
+def _attempt(value):
+    """A positive integer attempt number, else None (unidentified)."""
+    return value if type(value) is int and value >= 1 else None
+
+
+def telemetry(value):
+    """Validated stored telemetry, else None. Either part may be None (unknown, never
+    zero) but not both: a known attempt with unknown usage is still the latest one."""
+    if type(value) is not dict or set(value) != {"batch_eecu_usage_seconds", "attempt"}:
+        return None
+    seconds, attempt = value["batch_eecu_usage_seconds"], value["attempt"]
+    if (seconds is not None and _eecu(seconds) is None) or (attempt is not None and _attempt(attempt) is None):
+        return None
+    if seconds is None and attempt is None:
+        return None
+    return dict(batch_eecu_usage_seconds=seconds, attempt=attempt)
+
+
+def observe_telemetry(task, result):
+    """Latest-attempt task telemetry from a status response bound to the task's
+    confirmed operation; the attempt is tracked independently of the measurement.
+    A newer valid attempt replaces the current value, with unknown (None) usage when
+    its EECU value is missing or malformed: never the older attempt's value or zero.
+    An older attempt, or an unidentified one once an attempt is known (including a
+    stored label), never replaces it. Polls of the same attempt replace a valid value,
+    never add, and keep it when they carry none."""
+    attempt = _attempt(result.get("attempt"))
+    seconds = _eecu(result.get("batch_eecu_usage_seconds"))
+    stored = task.get("telemetry")
+    latest = _attempt(stored.get("attempt")) if type(stored) is dict else None
+    if latest is not None and (attempt is None or attempt < latest):
+        return
+    if seconds is None and (attempt is None or attempt == latest):
+        return
+    task["telemetry"] = dict(batch_eecu_usage_seconds=seconds, attempt=attempt)
+
+
+def task_view(task, **fields):
+    view = dict(fields)
+    if telemetry(task.get("telemetry")) is not None:
+        view["telemetry"] = telemetry(task["telemetry"])
+    return view
+
+
 def public_status(state, policy, persisted=True):
     """Small allowlisted shared-log view; detailed provenance stays in private GCS."""
     loc = policy["control"]
     return dict(
         run_id=state["run_id"],
         status=state["status"],
-        tasks=[dict(name=t["name"], state=t["state"]) for t in state["tasks"]],
+        tasks=[task_view(t, name=t["name"], state=t["state"]) for t in state["tasks"]],
         destination=f"gs://{state['recipe']['destination']['bucket']}/{state['prefix']}/",
         manifest=f"gs://{loc['bucket']}/{loc['prefix']}/{state['run_id']}.json",
         outputs=(
@@ -267,8 +320,8 @@ class Runner:
     # Destination-specific steps. These GCS defaults are the institutional
     # contract; runner_personal overrides them for Drive without GCS inventory.
 
-    def _validate(self, recipe):
-        return validate_recipe(recipe, self.policy)
+    def _validate(self, recipe, admission=True):
+        return validate_recipe(recipe, self.policy, admission=admission)
 
     def _reservation(self, recipe, identifier):
         buckets = {recipe["destination"]["bucket"], self.policy["control"]["bucket"]}
@@ -312,17 +365,24 @@ class Runner:
             self.engine.initialize(self.credentials, self.policy["project"])
             self.initialized = True
 
-    def _load(self, identifier):
+    def _load(self, identifier, *, admission=True):
         state, generation = self.store.read(run_id(identifier))
         require(state is not None, "run reservation absent", "conflict")
+        bound = state.get("policy_sha256") == digest(self.policy)
+        if not bound and self.policy["limits"].get("outputs") == CEILINGS["outputs"]:
+            # A record created under the former ten-output ceiling keeps that policy.
+            legacy = dict(self.policy, limits=dict(self.policy["limits"], outputs=LEGACY_OUTPUTS))
+            if state.get("policy_sha256") == digest(legacy):
+                self.policy, bound = legacy, True
         require(
-            state.get("schema") == 1
-            and state.get("run_id") == identifier
-            and state.get("policy_sha256") == digest(self.policy),
+            state.get("schema") == 1 and state.get("run_id") == identifier and bound,
             "run policy binding mismatch",
             "conflict",
         )
-        recipe = self._validate(state["recipe"])
+        # Status and cancel inspect or stop a trusted record and never prepare or submit:
+        # they skip only the execution-admission predicates, so a record made before
+        # those checks can still be stopped. Run and resume stay strict.
+        recipe = self._validate(state["recipe"], admission)
         require(
             state["binding"] == binding(recipe, self.policy, state["source"]),
             "run content binding mismatch",
@@ -474,6 +534,7 @@ class Runner:
                     "uncertain",
                 )
                 task["state"] = status
+                observe_telemetry(task, result)
                 return status
             except RunnerError:
                 raise
@@ -496,7 +557,7 @@ class Runner:
                 self.budget.pause(min(60, 15 * 2**attempt + jitter))
 
     def status(self, identifier):
-        state, _ = self._load(identifier)
+        state, _ = self._load(identifier, admission=False)
         return self._public(state)
 
     def run(self, recipe, identifier, source=None):
@@ -572,7 +633,7 @@ class Runner:
         return self._execute()
 
     def cancel(self, identifier):
-        self.state, self.generation = self._load(identifier)
+        self.state, self.generation = self._load(identifier, admission=False)
         if self.state["status"] == "succeeded":
             return self._public(self.state)
         self.state["stop"] = "cancelled"
@@ -615,6 +676,23 @@ class Runner:
             if not self.state["tasks"] or any(
                 t["state"] == "prepared" for t in self.state["tasks"]
             ):
+                recipe = self.state["recipe"]
+                if (
+                    recipe["workflow"] == "coarse"
+                    and "fit" in recipe["coarse"].get("rao", {})
+                    and "provenance" not in self.state
+                ):
+                    # A reference fit runs once. Its intent is durable before it starts;
+                    # without a persisted model a later attempt never refits silently.
+                    require(
+                        self.state.get("calibration") != "started",
+                        "coarse calibration was interrupted; no durable model to replay",
+                        "uncertain",
+                    )
+                    self.state["calibration"] = "started"
+                    self.phase = "persist"
+                    self._save()
+                    self.phase = "prepare"
                 prepared, provenance = self.engine.prepare(
                     self.state["recipe"],
                     self.state["prefix"],

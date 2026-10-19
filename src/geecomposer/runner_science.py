@@ -95,15 +95,9 @@ def export_window(bounds):
     )
 
 
-def export_request(product, region, grid, window):
-    """Final export image and the region for the native constructor.
-
-    The constructor reprojects and then clips to its region, so the AOI selection
-    happens first and the sentinel fill follows it; the constructor's region is the
-    exact grid-pixel rectangle of the window, which bounds the otherwise unbounded
-    fill without masking any cell inside the window.
-    """
-    rectangle = ee.Geometry.Rectangle(
+def window_rectangle(grid, window):
+    """The exact grid-pixel rectangle of an aligned window (or tile core)."""
+    return ee.Geometry.Rectangle(
         [
             window["col_off"],
             window["row_off"],
@@ -113,7 +107,84 @@ def export_request(product, region, grid, window):
         proj=grid.projection(),
         geodesic=False,
     )
-    return export_encoded(product.clip(region)), rectangle
+
+
+def export_request(product, region, grid, window):
+    """Final export image and the region for the native constructor.
+
+    The constructor reprojects and then clips to its region, so the AOI selection
+    happens first and the sentinel fill follows it; the constructor's region is the
+    exact grid-pixel rectangle of the window, which bounds the otherwise unbounded
+    fill without masking any cell inside the window.
+    """
+    return export_encoded(product.clip(region)), window_rectangle(grid, window)
+
+
+def aoi_window(region, grid):
+    """Aligned export window and conservative pixel bound of the AOI in the grid.
+
+    EE computes the AOI's enclosing rectangle directly in the grid's full affine
+    projection (CRS plus transform), so its coordinates are grid-pixel columns
+    and rows, including curved projected edges, shear and rotation.
+    """
+    coordinates = region.bounds(maxError=0.01, proj=grid.projection()).coordinates().getInfo()
+    require(
+        type(coordinates) is list and len(coordinates) == 1 and len(coordinates[0]) <= 10,
+        "unusable projected AOI bound",
+        "uncertain",
+    )
+    points = coordinates[0]
+    require(len(points) >= 4, "unusable projected AOI bound", "uncertain")
+    try:
+        if not all(math.isfinite(v) for x in points for v in (x[0], x[1])):
+            raise ValueError("non-finite bound")
+        bounds = (
+            min(x[0] for x in points),
+            min(x[1] for x in points),
+            max(x[0] for x in points),
+            max(x[1] for x in points),
+        )
+        window = export_window(bounds)
+        # The existing conservative bound (two extra cells per side) on these
+        # pixel coordinates; the identity affine leaves them as they are.
+        pixels = pixel_bound(bounds, (1, 0, 0, 0, 1, 0))
+    except (TypeError, ValueError, OverflowError, IndexError):
+        raise RunnerError("uncertain", "cannot establish output pixel bound") from None
+    require(window["width"] > 0 and window["height"] > 0, "unusable projected AOI bound", "uncertain")
+    return window, pixels
+
+
+def native_task(name, image, bounded, grid, cap, prefix, destination):
+    """One unstarted native export config for an encoded image and its rectangle."""
+    if "drive_folder" in destination:
+        # Drive has no object prefix: prefix is a unique run file-name base.
+        task = export_to_drive(
+            image,
+            name,
+            destination["drive_folder"],
+            bounded,
+            file_name_prefix=f"{prefix}_{name}",
+            max_pixels=cap,
+            crs=grid.crs,
+            crs_transform=grid.transform,
+            no_data=EXPORT_NODATA,
+        )
+    else:
+        task = export_to_gcs(
+            image,
+            name,
+            destination["bucket"],
+            bounded,
+            file_name_prefix=f"{prefix}/{name}/image",
+            max_pixels=cap,
+            crs=grid.crs,
+            crs_transform=grid.transform,
+            no_data=EXPORT_NODATA,
+            cloud_optimized=True,
+        )
+    # Match native Task.start's explicit default and bind it in the fingerprint.
+    task.config["workloadTag"] = ""
+    return dict(name=name, config=task.config, fingerprint=config_fingerprint(task.config))
 
 
 def config_fingerprint(config):
@@ -152,36 +223,14 @@ def prepare(recipe, prefix, budget, previous=None):
 
 def _prepare(recipe, prefix, budget, previous, step):
     budget.timeout()
+    if recipe["workflow"] == "coarse":
+        from .runner_coarse import prepare as coarse_prepare
+
+        return coarse_prepare(recipe, prefix, budget, previous, step)
     step[0] = "bounds"
     grid = RaoGrid(**recipe["grid"])
     region = ee.Geometry(recipe["aoi"], proj="EPSG:4326", geodesic=False)
-    # EE computes the AOI's enclosing rectangle directly in the grid's full affine
-    # projection (CRS plus transform), so its coordinates are grid-pixel columns
-    # and rows, including curved projected edges, shear and rotation.
-    coordinates = region.bounds(maxError=0.01, proj=grid.projection()).coordinates().getInfo()
-    require(
-        type(coordinates) is list and len(coordinates) == 1 and len(coordinates[0]) <= 10,
-        "unusable projected AOI bound",
-        "uncertain",
-    )
-    points = coordinates[0]
-    require(len(points) >= 4, "unusable projected AOI bound", "uncertain")
-    try:
-        if not all(math.isfinite(v) for x in points for v in (x[0], x[1])):
-            raise ValueError("non-finite bound")
-        bounds = (
-            min(x[0] for x in points),
-            min(x[1] for x in points),
-            max(x[0] for x in points),
-            max(x[1] for x in points),
-        )
-        window = export_window(bounds)
-        # The existing conservative bound (two extra cells per side) on these
-        # pixel coordinates; the identity affine leaves them as they are.
-        pixels = pixel_bound(bounds, (1, 0, 0, 0, 1, 0))
-    except (TypeError, ValueError, OverflowError, IndexError):
-        raise RunnerError("uncertain", "cannot establish output pixel bound") from None
-    require(window["width"] > 0 and window["height"] > 0, "unusable projected AOI bound", "uncertain")
+    window, pixels = aoi_window(region, grid)
     cap = recipe["limits"]["pixels"]
     workflow = recipe["workflow"]
     if workflow == "seasonal_nirv" or recipe.get("rao", {}).get("normalization") == "gn":
@@ -342,39 +391,5 @@ def _prepare(recipe, prefix, budget, previous, step):
         # cells and double bands (Rao value/count/coverage), bounded by the aligned
         # export window. The public helpers stay metadata-only.
         image, bounded = export_request(product, region, grid, window)
-        if "drive_folder" in destination:
-            # Drive has no object prefix: prefix is a unique run file-name base.
-            task = export_to_drive(
-                image,
-                name,
-                destination["drive_folder"],
-                bounded,
-                file_name_prefix=f"{prefix}_{name}",
-                max_pixels=cap,
-                crs=grid.crs,
-                crs_transform=grid.transform,
-                no_data=EXPORT_NODATA,
-            )
-        else:
-            task = export_to_gcs(
-                image,
-                name,
-                destination["bucket"],
-                bounded,
-                file_name_prefix=f"{prefix}/{name}/image",
-                max_pixels=cap,
-                crs=grid.crs,
-                crs_transform=grid.transform,
-                no_data=EXPORT_NODATA,
-                cloud_optimized=True,
-            )
-        # Match native Task.start's explicit default and bind it in the fingerprint.
-        task.config["workloadTag"] = ""
-        result.append(
-            dict(
-                name=name,
-                config=task.config,
-                fingerprint=config_fingerprint(task.config),
-            )
-        )
+        result.append(native_task(name, image, bounded, grid, cap, prefix, destination))
     return result, provenance

@@ -2,9 +2,11 @@ import copy
 
 import pytest
 
-from geecomposer.recipe import RunnerError
-from geecomposer.runner import verify_inventory
-from runner_fakes import Crash, World
+import json
+
+from geecomposer.recipe import RunnerError, validate_recipe
+from geecomposer.runner import LEASE_SECONDS, Runner, observe_telemetry, task_view, verify_inventory
+from runner_fakes import Crash, World, recipe_value
 
 pytestmark = pytest.mark.usefixtures("runner_offline")
 
@@ -747,3 +749,134 @@ def test_valid_persisted_reasons_are_shown_unchanged():
     for reason in ("uncertain", "unexpected timeout", "no_data: no input scenes"):
         assert public_error(dict(phase="scenes", reason=reason)) == dict(phase="scenes", reason=reason,
                                                                         persisted=True)
+
+
+# ------------------------------------------------------------------ latest-attempt telemetry (S03-F3)
+
+U = "batch_eecu_usage_seconds"
+UNKNOWN_2 = {U: None, "attempt": 2}
+
+
+@pytest.mark.parametrize(
+    "stored, reply, expected",
+    [
+        (None, {U: 0, "attempt": 1}, {U: 0, "attempt": 1}),  # valid zero is a measurement
+        (None, {"attempt": 1}, {U: None, "attempt": 1}),  # attempt observed, usage unknown
+        (None, {U: 4.0}, {U: 4.0, "attempt": None}),  # no attempt known anywhere
+        (None, {}, None),
+        (None, {U: float("nan"), "attempt": 0}, None),  # nothing valid observed
+        ({U: 3.0, "attempt": 1}, {U: 3.5, "attempt": 1}, {U: 3.5, "attempt": 1}),  # replaced, never summed
+        ({U: 3.5, "attempt": 1}, {"attempt": 1}, {U: 3.5, "attempt": 1}),  # same attempt, nothing new
+        ({U: 5.5, "attempt": 1}, {"attempt": 2}, UNKNOWN_2),  # newer attempt: unknown, not 5.5
+        ({U: 5.5, "attempt": 1}, {U: float("inf"), "attempt": 2}, UNKNOWN_2),
+        ({U: None, "attempt": 2}, {U: 5.5, "attempt": 1}, UNKNOWN_2),  # late older response
+        ({U: None, "attempt": 2}, {U: 5.5}, UNKNOWN_2),  # unidentified attempts never overwrite
+        ({U: None, "attempt": 2}, {U: 5.5, "attempt": True}, UNKNOWN_2),
+        ({U: None, "attempt": 2}, {U: 5.5, "attempt": 2.0}, UNKNOWN_2),
+        ({U: None, "attempt": 2}, {U: 0.0, "attempt": 2}, {U: 0.0, "attempt": 2}),
+        ({U: 4.0, "attempt": None}, {U: 5.0}, {U: 5.0, "attempt": None}),  # legacy, attempt-less
+        ({U: 4.0, "attempt": None}, {"attempt": 1}, {U: None, "attempt": 1}),
+        ({U: "lots", "attempt": 2}, {U: 5.5, "attempt": 1}, {U: "lots", "attempt": 2}),  # stored label orders
+    ],
+)
+def test_latest_attempt_is_tracked_independently_of_its_measurement(stored, reply, expected):
+    task = {"name": "p", "request_id": "request-1"} if stored is None else {
+        "name": "p", "request_id": "request-1", "telemetry": dict(stored)}
+    observe_telemetry(task, dict(reply, state="RUNNING"))
+    assert task.get("telemetry") == expected and task["request_id"] == "request-1"
+    shown = task_view(task, name="p").get("telemetry")
+    assert shown == (None if expected is None or expected[U] == "lots" else expected)
+
+
+def replying(w, replies):
+    """Status responses carry these telemetry fields, in order, then none."""
+    status = w.engine.status
+
+    def reply(request_id, operation=None):
+        result = status(request_id, operation)
+        if replies:
+            result.update(replies.pop(0))
+        return result
+
+    w.engine.status = reply
+
+
+@pytest.mark.parametrize(
+    "second",
+    [{}, {U: None}, {U: float("nan")}, {U: float("inf")}, {U: -1}, {U: "5.5"}, {U: True}],
+    ids=["missing", "null", "nan", "inf", "negative", "text", "bool"],
+)
+def test_newer_attempt_without_valid_eecu_stays_unknown_through_status_and_reload(second):
+    w = World()
+    w.engine.products = 1
+    w.engine.states = {"request-1": ["RUNNING"]}
+    replies = [{U: 5.5, "attempt": 1}, dict(second, attempt=2)]
+    replying(w, replies)
+    polls = []
+
+    def crash(name):
+        if name == "status.before":
+            polls.append(name)
+            if len(polls) == 3:
+                raise Crash(name)
+
+    w.boundary.hook = crash
+    with pytest.raises(Crash):
+        w.runner().run(w.recipe, "attempts")
+    w.boundary.hook = None
+    state, generation = w.store.records["attempts"]
+    assert state["tasks"][0]["telemetry"] == UNKNOWN_2
+    # The persisted record round-trips through strict JSON, as the stores write it.
+    w.store.records["attempts"] = (json.loads(json.dumps(state, allow_nan=False)), generation)
+    assert w.runner().status("attempts")["tasks"][0]["telemetry"] == UNKNOWN_2
+    w.clock.sleep(LEASE_SECONDS + 1)
+    replies += [
+        {U: 5.5, "attempt": 1},  # a late, older response
+        {U: 7.0, "attempt": 2},
+        {U: 0, "attempt": 2},  # valid zero replaces, never adds
+        {U: 1.25, "attempt": 3},
+        {U: 9.0, "attempt": "4"},  # an unidentified attempt never overwrites
+        {U: float("nan"), "attempt": 3},  # same attempt, nothing new: kept
+    ]
+    w.engine.states = {"request-1": ["RUNNING"] * 6 + ["COMPLETED"]}
+    writes = len(w.store.writes)
+    assert w.runner().resume("attempts")["status"] == "succeeded"
+    seen = []
+    for _, saved in w.store.writes[writes:]:
+        value = saved["tasks"][0].get("telemetry")
+        if not seen or seen[-1] != value:
+            seen.append(value)
+    assert seen == [UNKNOWN_2, {U: 7.0, "attempt": 2}, {U: 0, "attempt": 2}, {U: 1.25, "attempt": 3}]
+    assert w.runner().status("attempts")["tasks"][0]["telemetry"] == {U: 1.25, "attempt": 3}
+
+
+@pytest.mark.parametrize("outputs", [12, 10])
+def test_current_and_ten_output_records_keep_status_and_cancellation(outputs):
+    """Controls for S03-F4: an admissible current record and one created under the
+    former ten-output ceiling keep status, a live-owner stop and expired cancellation."""
+    w = World()
+    if outputs == 10:
+        legacy = dict(w.policy, limits=dict(w.policy["limits"], outputs=10))
+        value = recipe_value()
+        value["limits"] = {"outputs": 10}
+        recipe, creator = validate_recipe(value, legacy), Runner(legacy, w.store, w.engine, object(), w.clock.budget())
+    else:
+        recipe, creator = w.recipe, w.runner()
+    w.engine.states = {f"request-{i}": ["RUNNING"] for i in (1, 2, 3)}
+
+    def crash(name):
+        if name == "status.before":
+            raise Crash(name)
+
+    w.boundary.hook = crash
+    with pytest.raises(Crash):
+        creator.run(recipe, "control")
+    w.boundary.hook = None
+    assert w.runner().status("control")["status"] == "running"
+    assert w.runner().cancel("control")["status"] == "cancelling" and w.engine.cancel_calls == []
+    w.clock.sleep(LEASE_SECONDS + 1)
+    result = w.runner().cancel("control")
+    assert result["status"] == "cancelled" and sorted(w.engine.cancel_calls) == ["request-1", "request-2"]
+    state, _ = w.store.records["control"]
+    assert len(w.engine.submitted) == 2 and state["recipe"]["limits"]["outputs"] == outputs
+    assert [t["state"] for t in state["tasks"]] == ["CANCELLED", "CANCELLED", "prepared"]
