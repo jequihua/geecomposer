@@ -4,8 +4,10 @@ The installed `geecomposer` command uses the same package science functions for
 personal, institutional-local and hosted execution. The library/notebook APIs
 retain their defaults, custom callables, interactive initialization and
 unstarted Drive/GCS tasks; importing the package selects no CLI mode and never
-authenticates. No cloud execution was performed during the offline
-implementation; see [validation evidence](qualification.md).
+authenticates. The original implementation was offline; later accepted January
+regional exports and installed Linux checks are summarized in
+[regional evidence](regional_release.md). Institutional execution remains
+unqualified; see [qualification limits](qualification.md).
 
 ## Execution modes
 
@@ -121,7 +123,10 @@ Three monthly 2025 examples on a 1 km grid are provided:
 `coarse_s1_monthly_2025.json`, `coarse_s2_monthly_2025.json` and
 `coarse_rao_monthly_2025.json`. The S1 and S2 examples use an illustrative
 national-span outline plus a Pacific island piece; it is not an official
-boundary.
+boundary. The Rao example uses a separate illustrative polygon. None is the
+private measured RBMN geometry, and the 2025 monthly recipes are capability
+examples, not twelve observed live months. For all six presets, support sizes,
+operation orders and annual-memory limits, see [coarse methods](coarse.md).
 
 **Top-level fields.**
 
@@ -243,16 +248,21 @@ within the deadline.
 - Telemetry never affects task identity, success or limits. It is shown per
   task only when present.
 
-Project-level EECU reconciliation, waiting time and Drive/GCS costs are not
-measured here.
+This dry-run does not measure project-level EECU, waiting time or Drive/GCS cost.
+The regional campaign's partial task telemetry is observational and incomplete;
+see [measured values and limits](regional_release.md).
 
 ## Policy, identity and hosted packaging
 
 An administrator policy has exactly: `version`, `mode`, `project`,
 `service_account`, `outputs`, `inputs`, `control`, `limits`, `poll_seconds`,
 `image_version`. Location entries are `{bucket, prefix}`. Output and control
-buckets must differ because mutable control state needs conditional replacement
-permissions while raster output should have no delete permission. Prefix matches
+buckets must differ under the current validator because mutable control state
+needs conditional replacement while rasters should have no delete permission.
+Input/control may share an approved bucket at separate prefixes. An all-in-one
+bucket layout is not admitted even when administrators approve separate prefixes;
+it needs a separately reviewed validator correction or a distinct control bucket.
+Prefixes alone are not IAM isolation. Prefix matches
 include a slash boundary, never a mere textual prefix. No permissive policy is
 installed by default.
 
@@ -408,10 +418,11 @@ pixel check is performed and no scope is requested beyond the saved login's.
 Inspect the GeoTIFFs (grid, dtype, nodata, masks, values) before relying on
 them.
 
-**Qualification.** Personal mode is verified offline with fake credential,
-transport and task boundaries, temporary state directories and native EE graph
-construction. Live Earth Engine/Drive use and the Docker mount pattern have not
-been executed.
+**Qualification.** Offline checks cover fake credential/transport/task boundaries,
+temporary state and native graphs. Later bounded regional Drive and installed
+Linux results are accepted; see [regional evidence](regional_release.md).
+Those campaign results do not qualify every personal recipe or the host
+credential-mount pattern. Institutional identity and GCS delivery remain unverified.
 
 ## Runtime Earth Engine permissions
 
@@ -645,7 +656,9 @@ links. It never includes full recipes/AOIs, tokens or raw external exception tex
 
 The installed EE newTaskId/exportImage/Task.start/status and google-auth metadata
 refresh implementations were also inspected. Live identity, IAM, real EE/GCS
-timing/reconciliation, exported data, Docker and Cloud Run remain unqualified here.
+timing/reconciliation and Cloud Run remain unqualified. Accepted regional rasters
+and installed Linux observations have the specific limits in
+[regional evidence](regional_release.md).
 
 ## Pending live snapshot equivalence
 

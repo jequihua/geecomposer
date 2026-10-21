@@ -1,8 +1,8 @@
 # Offline engineer verification
 
-Run from the package root containing pyproject.toml. In the development checkout
-this is the package subdirectory; in the public checkout it is the repository
-root. Use an existing Python 3.11+ environment with the package dependencies and
+For public release verification, run from the committed standalone FRONT root
+containing pyproject.toml. The same verifier can run in the canonical DEV package
+subdirectory during development. Use an existing Python 3.11+ environment with the package dependencies and
 `dev` extra installed. The entry point never installs dependencies or accesses
 an index. Initial environment setup requires an approved package source.
 
@@ -46,4 +46,8 @@ Raw validation/remediation receipts and development governance are not shipped.
 
 Live examples require explicitly selected authorized inputs and credentials.
 The offline gate does not run notebooks, live exports, Docker or cloud commands.
+Accepted historical Linux tests (1,750 passes, no skips, including FIFO) and four
+January regional rasters are summarized in [regional release](regional_release.md).
+A current Windows gate does not re-execute those Linux or server measurements,
+and cannot qualify a newly built hosted policy/image or institutional IAM.
 See [qualification limits](qualification.md) and [operator procedure](cloud_run_operator.md).

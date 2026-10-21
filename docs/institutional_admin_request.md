@@ -1,6 +1,9 @@
 # Institutional administrator request
 
-Prepared for the owner to send; no message has been sent. Design date 2026-09-09.
+Prepared for the owner to send; no message is sent by this guide. Original design
+9 September 2026; release intake updated 21 October 2026. Accepted regional and
+Linux evidence is summarized in [regional release](regional_release.md).
+Institutional permissions, attachment and delivery have not been verified.
 
 ## Copyable request
 
@@ -20,8 +23,12 @@ prefixes, access-group details and the approved qualification budget. Please
 confirm Earth Engine registration/use classification, billing, quotas, retention,
 logging and any VPC Service Controls, CMEK or location restrictions.
 
-A separate build/deploy identity and a dedicated control bucket keep operational
-permissions separate from raster access. If unattended work must run outside
+Separate publication/deployment/invocation identities keep operational authority
+apart from the runtime account's EE/Storage privileges. Input and control may
+share an approved bucket with separate prefixes. The current policy validator
+requires control and raster-output buckets to differ; all three prefixes in one
+bucket require a separately reviewed implementation correction. Prefix names
+alone do not enforce isolation or scope listing permissions. If unattended work must run outside
 Google Cloud, please provide Workload Identity Federation for an institution-owned
 CI/compute identity. Please approve a small qualification run before production
 use; agree resource/cost limits before any live qualification.
@@ -98,9 +105,11 @@ authenticated broker are necessary for conflicting per-user data entitlements.
 2. Enable Earth Engine, Cloud Run, Cloud Storage and Artifact Registry APIs;
    enable Cloud Build only if selected. IAM Credentials/STS APIs are needed
    when the chosen federation/impersonation arrangement requires them.
-3. Create runtime and build/deploy service accounts or authorize maintainers to
-   do so with narrowly scoped permissions. Keep service-account key creation
-   disabled. Apply the selected matrix and test source access.
+3. Engineers provide the dedicated runtime-account email and project number,
+   confirm EE registration/permissions and attach the account to the Job. Identify
+   Git/registry publishers, deployer and invokers separately. Keep key creation
+   disabled. Supply exact expected identity and resource allowlists before hosted
+   policy/build; grants can finish after image publication, before execution.
 4. Supply output and control/input buckets already created. Confirm cross-project
    grants when bucket and EE project differ. Resolve CMEK, retention lock,
    requester-pays, VPC-SC and egress constraints before the pilot.
@@ -111,9 +120,13 @@ authenticated broker are necessary for conflicting per-user data entitlements.
    Cloud Run execution limits and retention. Billing alerts do not stop spending.
    EE daily EECU limits are approximate safeguards, not precise cash caps.
    [EE quotas](https://developers.google.com/earth-engine/guides/usage).
-7. Approve the bounded smoke and verify its outputs/audit principal. Test forbidden
-   bucket/prefix, replay of same run, cancellation and absence of user tokens.
-   Give the operations team the manifest/recovery procedure before wider access.
+7. Approve fresh request/submission/poll/time/download limits for one small
+   monthly Sentinel-to-GCS operational export. Verify actual attached principal,
+   recipe generation, durable state, terminal operation and delivered object
+   generations/sizes. Give operators repeat-use/recovery and rollback commands.
+   Wider scientific/snapshot equivalence, denied-destination, duplicate-run and
+   cancellation/recovery exercises belong to separately scoped qualification;
+   this pilot alone does not close that broader envelope.
 
 Noncommercial EE has tier/quota requirements that may evolve; administrators
 should confirm the applicable tier and account setup. Other Google Cloud services
@@ -140,7 +153,8 @@ audit, but is not a separate runner inventory request. Input/control reads need
 generation preconditions. Output delete remains excluded. See the complete
 [runner inventory](runner.md).
 
-No institutional resources or permissions have been verified. Institutional approval remains pending. These are preparation artifacts only;
-Linux/container qualification is pending, and publication/deployment/execution need exact
-human authority after the institutional handoff. See
+No institutional resources or permissions have been verified. Institutional
+approval remains pending. Earlier Linux qualification is accepted only for its
+measured artifacts. The real-policy hosted image and operational pilot are later
+gates; publication/deployment/execution need exact human authority. See
 [the operator procedure](cloud_run_operator.md).

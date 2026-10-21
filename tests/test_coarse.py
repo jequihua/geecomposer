@@ -62,7 +62,9 @@ def test_sum_weight_construction_order(real_ee):
     assert call(graph, base["image"])[0] == "Image.rename"
     test_name, test = call(graph, args["test"])
     assert test_name == "Image.gt"
-    value_name, value = call(graph, args["value"])
+    presence_name, presence = call(graph, args["value"])
+    assert presence_name == "Image.updateMask"  # presence only; the fraction rides in the values
+    value_name, value = call(graph, presence["image"])
     assert value_name == "Image.rename"
     stacked_name, stacked = call(graph, value["input"])
     assert stacked_name == "Image.addBands"

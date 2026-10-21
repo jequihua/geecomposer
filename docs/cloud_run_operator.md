@@ -3,7 +3,9 @@
 Institutional provisioning remains pending. No institutional identity, project, bucket, registry or grant is
 verified by this kit. Preparation is available now; Docker, push, deployment,
 upload and job execution each need their specified later authority. No command
-below is a request for an agent to run it. Docker use requires separate authorization; Linux container qualification remains pending.
+below is a request for an agent to run it. Accepted Linux/regional results apply
+to the measured artifacts; a new hosted policy/image still needs qualification.
+See [regional evidence](regional_release.md) and [limits](qualification.md).
 
 Use the [administrator request](institutional_admin_request.md) and
 [runner permission/recovery contract](runner.md).
@@ -14,13 +16,73 @@ execution uses the institution-approved gcloud identity. The helper never logs
 in; it does not make a personal ADC account institutional. Administrators must
 bind both tools to the approved operator identity before authorizing mutations.
 
+## One-source release chain and owners
+
+The canonical DEV package is projected by the official manifest/publisher into
+FRONT, then FRONT is committed before building. The chain is:
+DEV package → official projection → committed FRONT → existing `hosted` Docker
+target → immutable registry digest → Cloud Run Job. There is one Dockerfile,
+one set of locks and one deployment kit. Engineers receive the complete
+standalone FRONT root, not a detached Dockerfile or a cloud-specific fork.
+
+The architect owns source review/commit and later exact projection. From a clean
+committed DEV source or clean publishing worktree, use the existing publisher's
+`check --target-repo FRONT` and `status --target-repo FRONT`, review every
+create/update/delete and divergence, then separately authorized `apply` with the
+same target. Use no overwrite/dirty overrides and never bypass `FRUTLUPS_SEAT`.
+Check status again for zero pending/divergence, reconcile raw manifest/provenance
+and membership, run the FRONT portable verifier and commit FRONT. This prose is
+the public handoff; the publisher/governance remain in DEV and are not required
+for engineers building an already committed FRONT release. No projection occurs
+in this documentation stage.
+
+Engineers/admins supply the exact expected runtime-account email, project
+ID/number, region, registry, release identifier, job and permitted input/control/
+output locations. The expected identity and approved resources must be known
+before policy validation and hosted build. Effective grants may be completed
+after image publication, but must be verified before execution. Account creation
+reports or an engineer email are not proof of attachment, EE registration or IAM.
+
+Build owner, from the committed standalone FRONT root, after policy approval
+and separate build authority (POSIX; all variables supplied privately):
+
+```sh
+python=.venv/bin/python
+"$python" -m geecomposer.deployment --mode policy \
+  --policy "$PolicyInput" --output "$Policy"
+PolicySha256=$("$python" -c 'import sys; from geecomposer.recipe import digest,read_json; print(digest(read_json(sys.argv[1])))' "$Policy")
+docker build --platform linux/amd64 --target hosted \
+  --secret id=runtime_policy,src="$Policy" \
+  --build-arg POLICY_SHA256="$PolicySha256" -t "$ImageTag" .
+docker run --rm --network none "$ImageTag" --help
+```
+
+`--help` is startup evidence only. Qualify the actual policy/image, identity
+rejection, protected configuration and installed content/CLI before publication;
+reuse applicable unchanged science/Linux evidence. Keep failed build attempts.
+Use the existing local target for offline recipe checks; hosted validate/dry-run
+are intentionally refused. Keep personal OAuth, ADC files and service-account
+keys out of the context/image. BuildKit transports nonsecret private policy,
+which is deliberately bundled in the hosted image and bound to its hash label.
+
+Git and registry publication are separate future actions with separate owners:
+the source release owner publishes the reviewed committed FRONT ref to its
+approved remote using `git push REMOTE FRONT_REF`; the registry publisher uses
+`docker push "$ImageTag"` only for the qualified image under exact authority.
+Record the remote immutable digest from the publication, never a moving tag or
+local image ID, together with source commits, manifest/provenance, locks, base
+and canonical policy hash. Use that digest for render and binding checks below.
+No helper mode publishes Git/images or deploys a Job.
+
 ## Offline preparation and target contract
 
 The one package Dockerfile has `local` and `hosted` targets with the same wheel,
 runtime locks and numeric UID/GID 65532. There is no port. Runtime package/policy
 paths are root-owned and non-writable to that UID. No gcloud, test tooling,
 analysis tooling, credentials or runtime pip installation belongs in the image.
-Actual enforcement awaits the Linux gates below.
+Recorded Linux permission/content checks support the measured images. Verify
+the new hosted policy/image before deployment; inherited checks alone do not
+qualify it.
 
 `local`: `--help`, `validate FILE`, and `run --recipe FILE --dry-run` are offline.
 `hosted`: `--help`, generation-pinned `run`, `status`, `cancel`, `resume`;
@@ -46,7 +108,8 @@ syntactic acceptance does not establish institutional authority. The release ide
 circularity of embedding the final image digest in its own policy. Record the
 resulting immutable image digest and canonical policy hash together at release.
 
-From the package root with a prepared project venv. Policy preparation is
+All build and package commands below run from the **standalone FRONT root**,
+containing Dockerfile and pyproject.toml, with a prepared environment. Policy preparation is
 offline; replace the private path placeholders with administrator-supplied files.
 
 Windows PowerShell:
@@ -240,6 +303,32 @@ private receipts and deployment edits; this procedure is not registry attestatio
 or Linux qualification. The helper's later describe check binds the live Job to
 the verified digest/annotation but cannot replace this pre-deploy image check.
 
+## Inputs, durable state and outputs
+
+A recipe is small JSON describing dates, geometry, grid, product and destination.
+Upload it once to approved input storage; its object generation fixes the exact
+version used by a run. Sentinel imagery stays in Earth Engine: users do not
+upload the satellite archive to Cloud Run. The worker plans computations and EE
+writes rasters directly to GCS.
+
+The private control record is the run's durable notebook: source/model identity,
+reserved output names, intent, operation and progress survive worker exit. It
+must support generation-conditional replacement (create plus delete permission),
+while output inventory needs scoped listing and raster readers need approved
+read access. Prefixes look like folders but do not create IAM isolation.
+Input and state may share a bucket at separately approved prefixes. Although
+administrators can design shared-bucket layouts, the **current validator rejects
+control and output in the same bucket**, even at different prefixes. A proposed
+all-in-one layout needs a separately reviewed validator correction or a distinct
+control bucket; documentation cannot enable it.
+
+Users select output bucket/prefix in the recipe within **both** bundled policy
+and runtime IAM. A new child prefix under an already allowed prefix needs no
+policy edit if IAM also permits it. Adding an unlisted bucket requires approved
+policy update, hosted rebuild/qualification, publication and redeployment plus
+IAM; changing a recipe or grants alone cannot change bundled policy. Keep old
+policy/image bindings for recovery of existing runs.
+
 ## Cohort isolation, observation and recovery
 
 An invoker using argument overrides needs `run.jobs.runWithOverrides` as well as
@@ -291,4 +380,10 @@ Primary references: [Jobs execution](https://docs.cloud.google.com/run/docs/exec
 [container contract](https://docs.cloud.google.com/run/docs/container-contract),
 [job service identity](https://docs.cloud.google.com/run/docs/configuring/jobs/service-identity).
 See [container qualification](qualification.md)
-for the deferred Linux gates and observed offline evidence.
+for accepted Linux evidence, the historical-source caveat and remaining hosted
+and institutional gates. After engineer configuration and fresh explicit limits,
+run one bounded monthly export to GCS. Record verified runtime principal, recipe
+generation, durable state, terminal EE operation and output generations/sizes,
+plus repeat-use and rollback commands. Submission alone is not success. This
+operational pilot leaves broader scientific/snapshot/recovery qualification and
+final institutional handoff separate; annual/national feasibility is not a gate.

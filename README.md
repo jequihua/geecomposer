@@ -41,9 +41,12 @@ Recent milestones added these workflow improvements:
 - coarse-first S1/S2/coarse-Rao products on six resolutions, including the fixed
   national MX-AEA grid (`geecomposer.coarse`). They are also available as
   `"workflow": "coarse"` recipes, with monthly periods, tile cores, a shared
-  snapshot and model, and credential-free dry-runs (`docs/runner.md`,
-  `docs/coarse.md`). The recipe output ceiling is now 12 tasks. These products
-  are offline-tested only: no live run or national export has been made.
+  snapshot and model, and credential-free dry-runs. The recipe output ceiling is
+  12 tasks. Four bounded January 2025 regional products now have accepted raster
+  evidence; twelve monthly outputs remain capability, not twelve observed runs.
+  See the [coarse guide](docs/coarse.md), [runner](docs/runner.md) and
+  [regional release evidence](docs/regional_release.md). National execution is
+  indefinitely deferred.
 
 The deterministic test suite verifies call patterns, pipeline behavior, and
 Rao arithmetic against independent numerical calculations. Live Earth Engine
@@ -172,7 +175,9 @@ Installing the package provides `geecomposer`. Without an administrator policy
 it runs in **personal mode**: your own Earth Engine login, exports to your
 Google Drive, and private run records on your machine. No service account,
 GCS bucket or policy file is needed. This path is implemented and tested
-offline with fakes; it has not yet been live- or container-qualified.
+offline with fakes. Accepted regional Drive and installed Linux evidence is
+summarized in [regional release evidence](docs/regional_release.md); it does not
+qualify every personal recipe or the host credential-mount pattern.
 
 1. Log in once on the host with the Earth Engine client (this is Earth Engine's
    own flow; geecomposer never logs in or writes credentials):
@@ -750,9 +755,10 @@ per year.
 
 ## Current Project Status
 
-Release candidate preparation only: institutional live execution remains
-unqualified, and the personal CLI/Drive path is tested offline only (its live
-and container runs are pending). The package has offline tests for:
+Public release preparation now follows accepted bounded regional and installed
+Linux results dated 21 October 2026. Institutional live execution remains
+unqualified. Read [regional release evidence](docs/regional_release.md) for the
+four January products and their limits. The package also has offline tests for:
 
 - composition, Rao, seasonal NIRv, and export helpers are available
 - all three dataset presets exist (`sentinel1`, `sentinel1_float`,
@@ -856,7 +862,8 @@ Read [qualification status](docs/qualification.md) and
 
 ### Explicitly deferred beyond v0.1
 
-- live institutional GCS/Cloud Run qualification
+- broader institutional qualification after the separately staged operational pilot
+- annual memory optimization and national execution
 - general monthly and seasonal grouping through the composition API
 - Landsat support
 - general-purpose scheduling and visualization layers
@@ -879,9 +886,10 @@ Read [qualification status](docs/qualification.md) and
 ### Container and Cloud Run preparation
 
 The package Dockerfile has shared `local` (offline CLI) and `hosted` (required
-administrator policy) targets. Container execution remains deferred; these are
-reviewable artifacts, not a qualified image. See [container evidence and deferred
-gates](docs/qualification.md), [base/lock provenance](container/README.md),
+administrator policy) targets. Accepted Linux results apply to pinned measured
+images; a future hosted image with the real site policy requires its own affected
+checks and institutional smoke. See [qualification limits](docs/qualification.md),
+[base/lock provenance](container/README.md),
 and the [operator procedure](docs/cloud_run_operator.md). The operator
 helper `python -m geecomposer.deployment` defaults to an offline plan; upload and
 execute are explicit, separately authorized modes. No mode publishes or deploys.

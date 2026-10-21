@@ -12,7 +12,11 @@ Earth Engine object is built:
 With an initialized Earth Engine session and real completed C1/C2 rows (band
 ``dimensions`` included), ``national_monthly(snapshot)`` returns twelve lazy
 images on the national grid; see docs/coarse.md. These offline checks are not
-server evidence: FC01-FC14 have not run.
+server evidence. Accepted January regional exports are summarized in
+``docs/regional_release.md``; they do not qualify national or annual execution.
+The public AOI here is illustrative, not the private measured RBMN geometry.
+All six presets remain available; twelve monthly images are capability, not
+twelve measured live successes. National execution remains indefinitely deferred.
 """
 
 from geecomposer import coarse, grouping

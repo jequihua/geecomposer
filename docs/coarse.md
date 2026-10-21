@@ -9,7 +9,10 @@ over time:
 - **Coarse GN Rao:** strict 3x3 Rao on the coarse Sentinel-2 temporal median.
 
 The functions never evaluate, fetch metadata, authenticate, fit a model or start
-an export. The scientific rules are the adopted M005-S01 contract (A1-A19).
+an export. The recipe runner performs those explicit steps. The scientific rules
+are the adopted M005-S01 contract (A1-A19). Four bounded January 2025 products
+have accepted live raster evidence; read [regional release evidence](regional_release.md)
+for measured scope, chronology and limits.
 
 ## National MX-AEA grid: what is implemented, admitted and measured
 
@@ -19,10 +22,11 @@ things:
 
 1. **Offline capability (implemented).** `composite`, `composite_periods`
    (including coarse Rao) and the local `fine_first_reference` build lazy
-   national graphs. No Earth Engine call happens while building them.
-2. **Conditional mathematical admission (D129/D130).** The reviewed G1 bound
-   (`03_experiments/integration/M005/S02/amendment203/g1.md` in the development
-   repository) admits a native 10 m → MX-AEA first stage with `maxPixels` 225
+   graphs without remote evaluation. EE initialization/algorithm definitions
+   must already be available when building valid EE graphs; the pure admission
+   checks reject missing/invalid metadata before that point.
+2. **Conditional mathematical admission (D129/D130).** The reviewed geometric
+   bound admits a native 10 m → MX-AEA first stage with `maxPixels` 225
    (10 → 100 m) or 81 (10 → 50 m, the 250 m chain). Nested stages keep 144/49,
    and every stage uses `bestEffort=False`. The bound holds only for:
    - **native grids:** EPSG:32611–32616 with exactly `[10, 0, c, 0, −10, f]`;
@@ -33,8 +37,11 @@ things:
    The package checks these conditions per source and per whole cell, curved
    edges included, using exact Albers polar geometry. It never relies on cell
    centres or sampled points alone.
-3. **Measured server behaviour (none yet).** FC01–FC14 have not run. That
-   includes:
+3. **Measured server behaviour (bounded).** The accepted regional campaign
+   exercised corrected finite/coverage/median controls and four January exports;
+   see [the results and limitations](regional_release.md). The earlier FC01–FC14
+   national qualification checklist is not established in full by those runs.
+   Remaining generalization questions include:
    - EE's contributor counting and memory at 225;
    - its UTM/Albers arithmetic;
    - whether it confines the clipped reductions;
@@ -101,8 +108,8 @@ reads:
 - **Completion rows (C2):** the same scope, restricted to the candidate
   acquisition keys, with **no date filter** (`coarse.completion_query`).
 
-Running and storing these reads is the caller's job; S03 will do it in the
-runner. Each row has these fields:
+Running and storing these reads is the API caller's job; the implemented recipe
+runner already performs and persists them. Each row has these fields:
 
 - `id`
 - `time_ms` (from `system:time_start`)
@@ -162,16 +169,30 @@ These rules come from contract §6-§8:
 - **Finite values first.** Non-finite source values are replaced before any
   multiplication.
 - **Sums and weights.** Sums S and weights W ride on a constant base with
-  mask 1. Fractional validity counts once, as a value.
+  mask 1. Fractional validity counts once, as a value, and W is built in
+  double. In the synthetic server checks of M005-S05 correction247 (constant
+  images given `updateMask`, then clipped and mosaicked), a requested 1/2
+  mask read back as 128/255 and `where` gave its output the value's mask.
+  The stacked S/W value therefore keeps only presence (mask > 0) as its
+  mask, so reducer inputs have mask 1 and `reduceResolution` never applies
+  the fraction a second time. Those checks do not establish how every
+  asset stores masks. An exact fractional weight needs a numeric quality
+  value with binary presence.
 - **One threshold.** The coverage threshold (default 0.5) applies only after
   the last stage. Valid zeros stay valid; missing support is never written as
-  0.
+  0. Final admission (the observation and the fine-first reference) is
+  `finite(W) and W > 0 and (W >= threshold or |W - threshold| <= 1e-12)`:
+  an exact half cell can arrive a few units in the last place below 0.5
+  after the staged double means. The fixed tolerance is not configurable and
+  only decides admission; W, S and values are reported unchanged.
 - **One granule per cell.** For each acquisition, each cell takes the granule
   with the largest W; ties go to the smaller id.
 - **Temporal statistics.** Mean, exact median and population SD are
   equally weighted per observation. The median uses an explicit sort, not a
   histogram, and the SD uses two passes. Min, max, range, `obs__t_count` and
-  `cov__t_mean` complete the set.
+  `cov__t_mean` complete the set. Each observation is cast to double once
+  before any collection is built: collection sums, min/max and the sorted
+  median need one band type, and inferred types otherwise follow the values.
 - **NDVI** is computed from the median or mean reflectance composites.
 - **Sentinel-1** is linear power without Gamma MAP. dB is optional and applies
   only to mean, median, min and max.
@@ -207,7 +228,12 @@ For coarse Rao, fit one model **separately** with the existing
 median over `coarse.cell_region(aoi, grid)`. Then pass the frozen model:
 
 ```python
-rao_months = coarse.composite_periods(months_spec, model=model, snapshot=snapshot, ...)
+rao_months = coarse.composite_periods(
+    grouping.monthly_periods(2025), model=model, snapshot=snapshot,
+    dataset="sentinel2", aoi=aoi, grid=grid,
+    select=["B2", "B3", "B4", "B8"], mask="s2_cloud_score_plus",
+    temporal=("median",),
+)
 ```
 
 The model must hold **exactly** the four features
@@ -251,18 +277,54 @@ See the coarse section of [the runner guide](runner.md), with its three monthly
 EECU and runtime as unknown. Notebook callers can use the Python API directly
 with the same snapshot and model.
 
-Future national exports need a deliberately selected pilot and separate
-approval for the research account. The recipe path is offline-tested only, so
-it says nothing about server correctness, completion time or cost.
+National execution is indefinitely deferred and requires new bounded authority.
+Regional acceptance does not establish annual/national completion, cost or
+catalogue coverage. The shipped geometries are public illustrations, not the
+private measured RBMN geometry. The one-band campaign NDVI selection is not a
+public recipe option.
 
-## Not covered here
+## Resolution and operation order
 
-- Server qualification (FC01-FC14), installed-image qualification and any live
-  pilot are separate, separately approved work.
-- Earth Engine's contributor counting and memory at `maxPixels` 225, its
-  projection arithmetic, its confinement of the clipped reductions, the overlap
-  fractions, catalogue projections (especially Sentinel-1) and the other
-  FC01-FC14 server checks are unverified.
-- No Mexico-wide result has been produced. The existing 1000-read, 600-key and
-  400-per-period limits are unchanged, and nothing promises that a real
-  national year fits them.
+| Preset | Spatial chain in metres | Fixed 3 × 3 Rao support width |
+| --- | --- | --- |
+| 100 m | 10 → 100 | 300 m |
+| 250 m | 10 → 50 → 250 | 750 m |
+| 500 m | 10 → 100 → 500 | 1.5 km |
+| 1 km | 10 → 100 → 1000 | 3 km |
+| 5 km | 10 → 100 → 1000 → 5000 | 15 km |
+| 10 km | 10 → 100 → 1000 → 10000 | 30 km |
+
+All presets use spatial mean first. Temporal summaries are `mean`, exact `median`,
+`sd_pop` (population SD), `min`, `max` and `range`; `obs__t_count` and
+`cov__t_mean` report observation support. Reflectance is unitless after the
+0.0001 scale; S1 is linear power, with optional dB for supported statistics.
+Shared validity uses contributing bands together; zero is valid, absent support
+is not. Coarse S1 requires an explicit orbit pass and adds no terrain flattening
+or speckle filter. These limits affect interpretation of backscatter differences.
+
+The products differ by order: (1) spatial mean per acquisition → temporal
+summary; (2) for coarse Rao, spatial mean → temporal median → strict 3 × 3 GN Rao;
+(3) the fine-first benchmark summarizes time on the fine grid before spatial
+aggregation, with reference Rao applied to those reference features. The
+benchmark's different granule selection and S1 resampling also matter; the
+comparison does not isolate temporal ordering alone. None is a silent fallback.
+
+API periods are `(label, start, end)` tuples, for example
+`(("jan", "2025-01-01", "2025-02-01"),)`; `grouping.monthly_periods(2025)`
+returns twelve ordered half-open UTC months. Recipes use objects instead:
+`"periods": [{"label": "jan", "start": "2025-01-01", "end": "2025-02-01"}]`
+inside `coarse`, or `"periods": "monthly"` for a calendar-year run. Periods must
+be unique, ordered and non-overlapping, at most twelve. One shared snapshot and,
+for Rao, one frozen model apply across periods/cores. The annual reference fit
+in the illustrative Rao recipe is a choice, not proof of annual feasibility;
+the accepted regional Rao fit used January only.
+
+Three annual S2/NDVI attempts failed with provider OOM, including one-band output.
+A smaller final grid/file does not eliminate native input work or exact temporal
+sort memory. No untested tile settings, alternative filtering, approximation or
+automatic fallback are prescribed. Twelve monthly outputs are implemented
+capability, not twelve successful live exports. Annual optimization, national
+execution and the independent M004 Rao comparison remain deferred/nonblocking.
+The 1000-read, 600-key and 400-per-period limits remain; no national result or
+cost promise follows. A fresh hosted image and institutional operational smoke
+are still separate gates in [the operator guide](cloud_run_operator.md).

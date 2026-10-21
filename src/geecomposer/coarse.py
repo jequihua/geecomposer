@@ -75,6 +75,7 @@ READ_LIMIT = 1000
 RUN_GROUP_LIMIT = 600
 PERIOD_GROUP_LIMIT = 400
 MAX_DOUBLE = sys.float_info.max
+COVERAGE_TOLERANCE = 1e-12  # D179: fixed absolute final coverage-fraction tolerance; not configurable
 _ID = re.compile(r"[A-Za-z0-9_-]{1,240}")
 _UTM = re.compile(r"EPSG:326(\d\d)")
 _DATATAKE = re.compile(r"(GS2[A-D]_\d{8}T\d{6}_\d{6})_N\d{2}\.\d{2}")
@@ -716,20 +717,27 @@ def sum_weight_inputs(values, quality, names, projection=None, clip=None):
 
     The finite flag is taken first; non-finite values are replaced with 0 before any
     multiplication; the fractional validity m is carried once, as a value; and
-    ``where`` on a constant zero base keeps the base's mask 1 and unbounded footprint.
+    ``where`` on a constant zero base keeps the base's unbounded footprint. In the
+    synthetic paths measured in M005-S05 correction247, ``where`` gave its output the
+    value's fractional mask, so that mask reached the reducer and weighted it a second
+    time; the stacked value therefore keeps only presence (mask > 0) as its mask
+    (``updateMask`` replaced a nonzero mask there). The same paths read a mask back as
+    float32, so the support is cast to double before it forms W; otherwise W and every
+    S/W would lose double precision.
     The base takes the native source projection unless an explicit one is given (a
     computed composite has no native grid of its own). For MX-AEA targets ``clip`` is
     the admitted rectangle plus margin: the reducer input exists only there."""
     projection = values.select(0).projection() if projection is None else projection
-    support = values.mask().reduce(ee.Reducer.min())
+    support = values.mask().reduce(ee.Reducer.min()).toDouble()
     finite = values.abs().lte(MAX_DOUBLE).reduce(ee.Reducer.min())
     weight = support.multiply(finite) if quality is None else support.multiply(quality).multiply(finite)
     replaced = values.where(finite.Not(), 0)
     numerator = replaced.multiply(weight)
+    value = numerator.addBands(weight).rename(names)
     base = _zeros(names, projection)
     if clip is not None:
         base = base.clip(clip)
-    return base.where(weight.gt(0), numerator.addBands(weight).rename(names))
+    return base.where(weight.gt(0), value.updateMask(value.mask().gt(0)))
 
 
 def _staged(image, value, bounds, names, keep=None):
@@ -754,10 +762,23 @@ def _select_granule(stacks):
     return best
 
 
+def _coverage_admitted(weight, theta):
+    """Final coverage admission shared by the coarse-first observation and the fine-first
+    reference (D179): finite W, W > 0, and W >= theta or |W - theta| <= 1e-12.
+
+    W is a full-cell coverage fraction in double; an exact theta (for example a half
+    cell) can arrive a few ulps below theta after the staged means. The fixed absolute
+    tolerance only decides admission; W, S and every value stay unrounded, and zero or
+    absent support is never admitted, whatever theta is. Use only after the last stage."""
+    finite = weight.abs().lte(MAX_DOUBLE)
+    near = weight.subtract(theta).abs().lte(COVERAGE_TOLERANCE)
+    return finite.And(weight.gt(0)).And(weight.gte(theta).Or(near))
+
+
 def _observation(best, bands, theta, projection):
-    """Final-only threshold: value S/W and valid=1 where W >= theta, else zeros."""
+    """Final-only threshold: value S/W and valid=1 where coverage is admitted, else zeros."""
     weight = best.select("W")
-    valid = weight.gte(theta)
+    valid = _coverage_admitted(weight, theta)
     value = best.select([f"S_{b}" for b in bands], list(bands)).divide(weight)
     names = list(bands) + ["W", "valid"]
     return _zeros(names, projection).where(valid, value.addBands(weight).addBands(ee.Image.constant(1)).rename(names))
@@ -775,7 +796,13 @@ def _median(images):
 
 
 def temporal_statistics(observations, bands, stats, *, prefix="s_mean", db=False, index=None):
-    """Equal-observation statistics over binary-valid observations (explicit sums)."""
+    """Equal-observation statistics over binary-valid observations (explicit sums).
+
+    Every collection operation here (sum, min/max, the sorted-array median) needs one
+    band type, but inferred types follow each observation's values; each observation
+    is cast to double once, first, so every derived collection is homogeneous. The cast
+    changes no value, mask, band name or order."""
+    observations = [ee.Image(o).toDouble() for o in observations]
     total = ee.ImageCollection.fromImages(observations).sum()
     count = total.select("valid")
     defined = count.gt(0)
@@ -1127,7 +1154,7 @@ def _fine_first(spec, groups, fine_projection, grid, bounds, out_names, keep=Non
     inputs = sum_weight_inputs(values, None, stage_names, fine_projection, clip=clip)
     staged = _staged(inputs, grid, bounds, stage_names, keep=None if keep is None else _aea_rectangle(keep))
     weight = staged.select("W")
-    valid = weight.gte(spec.coverage_min)
+    valid = _coverage_admitted(weight, spec.coverage_min)
     reference = staged.select([f"S_{n}" for n in stat_names], out_names).divide(weight).updateMask(valid)
     return reference.addBands(weight.rename("cov__s_mean"))
 

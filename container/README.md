@@ -1,8 +1,19 @@
 # Container inputs and qualification boundary
 
-This directory records public dependency/registry evidence, not a container
-qualification receipt. Linux container qualification is pending. Docker use requires separate
-authorization before any build/run/inspection.
+This directory records public build inputs and their history. As of 21 October
+2026, accepted installed Linux local/builder evidence includes 1,750 tests with
+zero skips, FIFO, 25 CLI invocations per image and content/permission checks;
+see [regional release](../docs/regional_release.md) and
+[qualification limits](../docs/qualification.md). A new hosted image with real
+administrator policy still needs its affected checks and institutional smoke.
+All public builds use the committed standalone FRONT root and its existing
+Dockerfile/locks; see [build and release steps](../docs/cloud_run_operator.md).
+Docker actions below are future separately authorized operations.
+
+The dated implementation sections below preserve what was pending at their
+original preparation dates. Their statements about unbuilt images describe
+those historical rounds, not the later accepted Linux results. Historical
+intermediate-source inspection limits remain explicitly recorded.
 
 `base-image.json` records the official Python 3.11.16 slim-trixie Linux/amd64
 manifest. Its SHA-256 was checked against manifest bytes and the registry digest
@@ -20,12 +31,16 @@ artifacts; target-platform resolution and Linux wheel availability were checked
 separately. Hashes establish artifact integrity, not suitability or licensing.
 
 The runtime resolution includes EE 1.7.45 and google-auth 2.58.0, while the current
-Windows regression environment uses EE 1.7.43 and google-auth 2.57.1. Linux import,
-algorithm fixture/API compatibility and full offline regressions against the
-resolved environment remain qualification gates. Never report Windows tests as
-a test of the Linux lock.
+Windows regression environment uses EE 1.7.43 and google-auth 2.57.1. Later accepted
+Linux results exercise the pinned Linux environment; future changed images need
+the relevant import/API/regression gates. Never report Windows tests as a test
+of the Linux lock.
 
 ## Repeatable update (metadata/dependency work only)
+
+Run from the standalone FRONT root for an authorized release build. Dependency
+updates return to canonical DEV for review and projection before rebuilding;
+never maintain a separate FRONT lock or Dockerfile.
 
 Use the repository venv. From the package root, POSIX uses `.venv/bin/python`;
 PowerShell uses `.venv/Scripts/python.exe`:
@@ -58,7 +73,7 @@ package-relative lock path). `--no-deps` here avoids Windows pip evaluating
 Windows-only dependency markers; uv performed the Linux dependency resolution.
 The actual Linux image install must resolve/check the complete hash-locked set.
 
-## Contents and license notices
+## Contents and license notices (original preparation boundary)
 
 The context is **the package root only**, never the development repository.
 The deny-by-default `.dockerignore` admits Python package source, package metadata,
