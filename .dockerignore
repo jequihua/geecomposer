@@ -1,0 +1,24 @@
+**
+!Dockerfile
+!.dockerignore
+!pyproject.toml
+!README.md
+!LICENSE
+!src/
+!src/geecomposer/
+!src/geecomposer/**/
+!src/geecomposer/**/*.py
+!container/
+!container/build-linux.lock
+!container/runtime-linux.lock
+!container/runtime_content.py
+!container/runtime_bootstrap.py
+!container/third_party_notices/
+!container/third_party_notices/*.json
+!container/third_party_notices/*.md
+!container/third_party_notices/*.txt
+container/third_party_notices/.gitattributes
+# Only code, metadata, reviewed notices and locks enter the context.
+**/runtime_policy.json
+**/__pycache__/**
+**/*.pyc

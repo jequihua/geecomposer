@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "workflow": "composite",
+  "dataset": "sentinel1_float",
+  "bands": [
+    "VV",
+    "VH"
+  ],
+  "start": "2024-06-01",
+  "end": "2024-07-01",
+  "transform": "vh_vv_ratio",
+  "aoi": {
+    "type": "Polygon",
+    "coordinates": [
+      [
+        [
+          10,
+          50
+        ],
+        [
+          10.001,
+          50
+        ],
+        [
+          10.001,
+          50.001
+        ],
+        [
+          10,
+          50.001
+        ],
+        [
+          10,
+          50
+        ]
+      ]
+    ]
+  },
+  "grid": {
+    "crs": "EPSG:32632",
+    "transform": [
+      20,
+      0,
+      571660,
+      0,
+      -20,
+      5539120
+    ]
+  },
+  "destination": {
+    "bucket": "geecomposer-example-output",
+    "prefix": "products/demo"
+  },
+  "preprocess": "gamma_map",
+  "filters": {
+    "instrumentMode": "IW",
+    "polarizations": [
+      "VV",
+      "VH"
+    ]
+  }
+}

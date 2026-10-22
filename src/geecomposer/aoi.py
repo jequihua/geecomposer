@@ -65,8 +65,10 @@ def read_vector_file(path: str | os.PathLike) -> dict:
     if gdf.empty:
         raise InvalidAOIError(f"Vector file contains no features: {filepath}")
 
-    # Reproject to WGS84 if CRS is set and differs
-    if gdf.crs is not None and not gdf.crs.equals("EPSG:4326"):
+    if gdf.crs is None:
+        raise InvalidAOIError("Local vector AOI must declare a CRS")
+    # Reproject before combining coordinates.
+    if not gdf.crs.equals("EPSG:4326"):
         gdf = gdf.to_crs("EPSG:4326")
 
     # Dissolve all features into a single geometry

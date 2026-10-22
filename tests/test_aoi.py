@@ -207,6 +207,7 @@ class TestGeojsonToEeGeometry:
         mock_ee.Geometry.return_value = sentinel
 
         result = geojson_to_ee_geometry(MULTI_FEATURE_COLLECTION_GEOJSON)
+        assert result is sentinel
         mock_ee.Geometry.assert_called_once()
         # The dissolved geometry passed to ee.Geometry should cover both polygons
         call_args = mock_ee.Geometry.call_args[0][0]

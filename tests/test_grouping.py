@@ -187,3 +187,34 @@ class TestComposeYearlyValidation:
             compose_yearly(
                 years=2024, dataset="sentinel2", aoi=POLYGON_GEOJSON, reducer="median"
             )
+
+
+class TestNamedPeriods:
+    """M005-S02: the shared named-period core; ``compose_yearly`` is unchanged."""
+
+    def test_monthly_periods_are_stable_and_validated(self) -> None:
+        from geecomposer.grouping import monthly_periods, validate_periods
+
+        months = monthly_periods(2025)
+        assert len(months) == 12 and months[0] == ("2025-01", "2025-01-01", "2025-02-01")
+        assert months[-1] == ("2025-12", "2025-12-01", "2026-01-01")
+        assert validate_periods(months) == months
+        assert monthly_periods(2024)[1] == ("2024-02", "2024-02-01", "2024-03-01")
+
+    def test_invalid_years_and_periods_raise(self) -> None:
+        from geecomposer.grouping import monthly_periods, validate_periods
+
+        for year in (0, True, 2025.0, "2025"):
+            with pytest.raises(GeeComposerError):
+                monthly_periods(year)
+        with pytest.raises(GeeComposerError, match="overlap"):
+            validate_periods([("a", "2025-01-01", "2025-03-01"), ("b", "2025-02-01", "2025-04-01")])
+
+    @patch("geecomposer.grouping.compose")
+    def test_yearly_delegation_is_unchanged(self, mock_compose: MagicMock) -> None:
+        from geecomposer.grouping import compose_yearly
+
+        compose_yearly([2025], dataset="sentinel2", aoi=POLYGON_GEOJSON)
+        mock_compose.assert_called_once_with(
+            start="2025-01-01", end="2026-01-01", dataset="sentinel2", aoi=POLYGON_GEOJSON
+        )

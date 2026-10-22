@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "workflow": "rao",
+  "dataset": "sentinel2",
+  "bands": [
+    "B4",
+    "B8"
+  ],
+  "start": "2024-06-01",
+  "end": "2024-07-01",
+  "transform": "ndvi",
+  "mask": "s2_cloud_score_plus",
+  "aoi": {
+    "type": "Polygon",
+    "coordinates": [
+      [
+        [
+          10,
+          50
+        ],
+        [
+          10.001,
+          50
+        ],
+        [
+          10.001,
+          50.001
+        ],
+        [
+          10,
+          50.001
+        ],
+        [
+          10,
+          50
+        ]
+      ]
+    ]
+  },
+  "grid": {
+    "crs": "EPSG:32632",
+    "transform": [
+      20,
+      0,
+      571660,
+      0,
+      -20,
+      5539120
+    ]
+  },
+  "destination": {
+    "bucket": "geecomposer-example-output",
+    "prefix": "products/demo"
+  },
+  "rao": {
+    "normalization": "raw",
+    "window_size": 3,
+    "decimal_places": null
+  }
+}

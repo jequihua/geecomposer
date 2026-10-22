@@ -1,43 +1,48 @@
-"""Sentinel-2 NDVI max composite over the case-study AOI.
+"""Sentinel-2 NDVI max composite over an explicit user-supplied AOI.
 
 Demonstrates the per-image transform stage: NDVI is computed for each
 cloud-masked image, then reduced across time with ``max``.
 
-Run from the repo root with:
+Run from the package root with a prepared project venv. Live evaluation
+requires separate authorization and explicit project/AOI inputs.
 
-    .venv/Scripts/python.exe 08_pkg/examples/sentinel2_ndvi_max.py
+Windows PowerShell:
+
+    .venv/Scripts/python.exe examples/sentinel2_ndvi_max.py
+
+POSIX shell:
+
+    .venv/bin/python examples/sentinel2_ndvi_max.py
 
 Set ``START_EXPORT = True`` to launch a Drive export task.
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from geecomposer import compose, export_to_drive, initialize
 from geecomposer.transforms.indices import ndvi
 
 
-PROJECT = "manglariars"
-AOI_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "01_data"
-    / "case_studies"
-    / "rbmn.geojson"
-)
+PROJECT = os.environ.get("GEECOMPOSER_PROJECT")
+AOI_PATH = Path(os.environ["GEECOMPOSER_AOI"]) if "GEECOMPOSER_AOI" in os.environ else None
 DRIVE_FOLDER = "geecomposer-dev"
-EXPORT_DESCRIPTION = "rbmn_s2_ndvi_max_2025"
+EXPORT_DESCRIPTION = "geecomposer_s2_ndvi_max_2025"
 START_EXPORT = False
 
 
 def main() -> None:
+    if not PROJECT or AOI_PATH is None:
+        raise SystemExit("Set GEECOMPOSER_PROJECT and GEECOMPOSER_AOI explicitly before running")
     initialize(project=PROJECT, authenticate=False)
 
     img = compose(
         dataset="sentinel2",
         aoi=str(AOI_PATH),
         start="2025-01-01",
-        end="2025-12-31",
+        end="2026-01-01",
         mask="s2_cloud_score_plus",
         transform=ndvi(),
         reducer="max",

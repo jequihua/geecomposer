@@ -15,10 +15,12 @@ from __future__ import annotations
 
 import ee
 
+from ..validation import validate_dates
+
 from ..exceptions import GeeComposerError
 from ._sentinel1_filters import (
     DEFAULT_INSTRUMENT_MODE,
-    SUPPORTED_FILTERS,
+    SUPPORTED_FILTERS as SUPPORTED_FILTERS,
     validate_filters,
 )
 
@@ -64,7 +66,8 @@ def load_collection(
     GeeComposerError
         If *filters* contains unsupported keys or malformed values.
     """
-    filters = filters or {}
+    validate_dates(start, end)
+    filters = {} if filters is None else filters
     validate_filters(filters)
 
     col = (

@@ -1,0 +1,30 @@
+{
+  "apiVersion": "run.googleapis.com/v1",
+  "kind": "Job",
+  "metadata": {
+    "name": "${JOB}",
+    "namespace": "${PROJECT_NUMBER}",
+    "labels": {"cloud.googleapis.com/location": "${REGION}"},
+    "annotations": {"geecomposer-policy-sha256": "${POLICY_SHA256}"}
+  },
+  "spec": {
+    "template": {
+      "spec": {
+        "taskCount": 1,
+        "parallelism": 1,
+        "template": {
+          "spec": {
+            "serviceAccountName": "${RUNTIME_ACCOUNT}",
+            "maxRetries": 0,
+            "timeoutSeconds": "2100",
+            "containers": [{
+              "image": "${IMAGE}",
+              "args": ["--help"],
+              "resources": {"limits": {"cpu": "1", "memory": "1Gi"}}
+            }]
+          }
+        }
+      }
+    }
+  }
+}
